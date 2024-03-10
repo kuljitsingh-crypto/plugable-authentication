@@ -73,6 +73,7 @@ const authInstance = new PlugableAuthentication({
   ...requiredParams,
   ...optionalParams
 });
+
 ```
 ### Example usage:
 ``` javascript
@@ -95,6 +96,9 @@ const {
   generateTokenForAuthVerificationMiddleware,
   validateTokenForAuthVerificationMiddleware,
 } = authInstance.middlewares();
+
+const {getUserDetails,
+       updateUserDetails}=authInstance.helpers()
 
 app.use(express.json({ limit: '200mb' }));
 app.use(cookieParser());
@@ -184,6 +188,29 @@ app.post(
   (req, res) => {
      //attach user details and csrf token in request object
     console.log(req.user,req.csrfToken);
+    res.sendStatus(200);
+  }
+);
+
+app.get(
+  '/user-details-by-id',
+  async (req, res) => {
+    const {id}=req.query;
+    const user=await getUserDetails({query:{id}})
+     //attach user details and csrf token in request object
+    console.log(user);
+    res.sendStatus(200);
+  }
+);
+
+app.psot(
+  '/update-user-metadata',
+  async (req, res) => {
+    const {id}=req.query;
+    const {country}=req.body;
+    const user=await updateUserDetails({id},{country})
+     //attach user details and csrf token in request object
+    console.log(user);
     res.sendStatus(200);
   }
 );
