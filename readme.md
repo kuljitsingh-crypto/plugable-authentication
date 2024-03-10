@@ -197,7 +197,6 @@ app.get(
   async (req, res) => {
     const {id}=req.query;
     const user=await getUserDetails({query:{id}})
-     //attach user details and csrf token in request object
     console.log(user);
     res.sendStatus(200);
   }
@@ -209,7 +208,6 @@ app.psot(
     const {id}=req.query;
     const {country}=req.body;
     const user=await updateUserDetails({id},{country})
-     //attach user details and csrf token in request object
     console.log(user);
     res.sendStatus(200);
   }
