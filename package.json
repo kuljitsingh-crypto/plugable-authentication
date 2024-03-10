@@ -1,0 +1,41 @@
+{
+  "name": "plugable-authentication",
+  "version": "1.0.0",
+  "description": "The PlugableAuthentication module offers middleware functions for various authentication tasks within Node.js applications, particularly in conjunction with Express.js.",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha --timeout 100000",
+    "single-test": "mocha --timeout 100000 -- -grep"
+  },
+  "devDependencies": {
+    "chai": "4.1.2",
+    "mocha": "^10.3.0",
+    "nodemon": "^3.0.2",
+    "prettier": "^3.2.4",
+    "dotenv": "^16.3.1"
+  },  
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "crypto-js": "^4.2.0",
+    "joi": "^17.12.0",
+    "jsonwebtoken": "^9.0.2",
+    "lodash": "^4.17.21",
+    "mongoose": "7.6.8",
+    "uuid": "^9.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kuljitsingh-crypto/plugable-authentication.git"
+  },
+  "keywords": [
+    "plugable",
+    "authentication",
+    "auth"
+  ],
+  "author": "Kuljit Singh",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kuljitsingh-crypto/plugable-authentication/issues"
+  },
+  "homepage": "https://github.com/kuljitsingh-crypto/plugable-authentication#readme"
+}
