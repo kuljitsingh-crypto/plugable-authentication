@@ -670,16 +670,16 @@ const getReqUserCsrfToken = (req) =>
 //Middlwares
 //1) Signup - done - testing done
 //2) Login - done - testing done
-//3) Reset Password - done
+//3) Reset Password - done - testing done
 //4) Change Password - done - testing done
 //5) change Auth Key - done - testing done
 //6) verify token - done - testing done
-//7) validate token for Auth verification - done
+//7) validate token for Auth verification - done - testing done
 //8) logout - done - testing done
 //9) new Ip verify - done - testing done
-//10) new csrf token - done
-//11) generate token for auth verification - done
-//12) Reset Password token validator - done
+//10) new csrf token - done - testing done
+//11) generate token for auth verification - done - testing done
+//12) Reset Password token validator - done - testing done
 
 class PlugableAuthentication {
   #mongoURI = null;
@@ -737,7 +737,7 @@ class PlugableAuthentication {
    * @param {string} [options.passwordValidationName] - default '"Must be between 8 and 256 characters"'
    * @param {object} [options.jwtOptions]- default '{algorithm: 'HS256',noTimestamp: false,expiresIn: '1h',notBefore: '0s'}'
    * @param {{expiresIn: string}} [options.jwtOptnFrIpValidation] - default null Ex: {expiresIn: "10h"/"7d"}
-   * @param {(shortToken:string,user:{email: string,
+   * @param {(shortToken:string,tokenExpiresIn:Date | null,user:{email: string,
    * id:string,
    * refreshToken:string,
    * csrfToken:string,
@@ -1214,11 +1214,13 @@ class PlugableAuthentication {
         if (!user) {
           throw new Error(NEED_AUTHENTICATION_BEFORE_USE);
         }
-        const { isCsrfTokenExpired, isCsrfTokenValid } =
-          await this.#verifyUserIpAddrAndCsrfToken(req, {
+        const { isCsrfTokenExpired } = await this.#verifyUserIpAddrAndCsrfToken(
+          req,
+          {
             userId: user.id,
             csrfToken: user.csrfToken,
-          });
+          }
+        );
 
         const requestBody = {
           ...(req.body || {}),
@@ -1362,14 +1364,16 @@ class PlugableAuthentication {
               ? expiresIn
               : RESET_PWD_EXPIRES_IN_TIME,
         };
-        const shortToken = await this.#generateValidationToken(
-          auth,
-          tokenValidationType.resetPwd,
-          userPayload,
-          jwtOptions
-        );
+        const { token: shortToken, expiresIn: tokenExpiresIn } =
+          await this.#generateValidationToken(
+            auth,
+            tokenValidationType.resetPwd,
+            userPayload,
+            jwtOptions
+          );
         req.validationToken = shortToken;
         req.user = preSavedUser;
+        req.tokenExpiresIn = tokenExpiresIn;
         resetUserCookies(res, this.#cookieId);
         next();
       } catch (e) {
@@ -1424,7 +1428,16 @@ class PlugableAuthentication {
             .status(400)
             .send("New password must be different from previous one.");
         }
-        const newUserDetails = await this.#createNewCsrfToken(userId);
+        const hashPassword = await createHashPasswword(newPassword);
+        const csrfToken = await createCsrfToken(
+          userId,
+          this.#encryptSecret,
+          this.#csrfTokenExpireTime
+        );
+        const newUserDetails = await this.#updateUserByQuery(
+          { id: userId },
+          { password: hashPassword, csrfToken }
+        );
         await this.#removeValidationToken(
           token,
           RESET_PWD_TOKEN_VERIFICATION_FAIL
@@ -1475,14 +1488,16 @@ class PlugableAuthentication {
               ? expiresIn
               : RESET_PWD_EXPIRES_IN_TIME,
         };
-        const shortToken = await this.#generateValidationToken(
-          auth,
-          tokenValidationType.authCheck,
-          userPayload,
-          jwtOptions
-        );
+        const { token: shortToken, expiresIn: tokenExpiresIn } =
+          await this.#generateValidationToken(
+            auth,
+            tokenValidationType.authCheck,
+            userPayload,
+            jwtOptions
+          );
         req.validationToken = shortToken;
         req.user = preSavedUser;
+        req.tokenExpiresIn = tokenExpiresIn;
         next();
       } catch (e) {
         return this.#errorHandler(
@@ -1511,7 +1526,7 @@ class PlugableAuthentication {
           return res.status(400).send(errorMessage);
         }
         const { auth, token } = req.body || {};
-        const userPayload = await await this.#errorRespWrapper(
+        const userPayload = await this.#errorRespWrapper(
           res,
           this.#verifyValidationToken
         )(
@@ -1909,13 +1924,17 @@ class PlugableAuthentication {
       }
     );
     const userPayload = { userId: user.id, ...userIpSource };
-    const shortToken = await this.#generateValidationToken(
-      user.id,
-      tokenValidationType.ipCheck,
-      userPayload,
-      jwtOptions
-    );
-    await tokenSenderCb(shortToken, { ...user, ...userIpSource });
+    const { token: shortToken, expiresIn: tokenExpiresIn } =
+      await this.#generateValidationToken(
+        user.id,
+        tokenValidationType.ipCheck,
+        userPayload,
+        jwtOptions
+      );
+    await tokenSenderCb(shortToken, tokenExpiresIn, {
+      ...user,
+      ...userIpSource,
+    });
   }
 
   async #verifyToken(
@@ -1953,13 +1972,12 @@ class PlugableAuthentication {
     }
     const tokenDetailsMaybe = {};
     if (createNewAccessTokenOnExpires && hasAccessTokenExpire) {
-      tokenDetailsMaybe.tokenDetailsnewAccessToken =
-        await createAccessFrmRefreshToken(
-          refreshToken,
-          this.#jwtSecret,
-          this.#encryptSecret,
-          this.#jwtOptions
-        );
+      tokenDetailsMaybe.tokenDetails = await createAccessFrmRefreshToken(
+        refreshToken,
+        this.#jwtSecret,
+        this.#encryptSecret,
+        this.#jwtOptions
+      );
     }
     const user = await this.#model
       .findOne({ id: accessTokenValue.id }, null, {
@@ -2126,6 +2144,7 @@ class PlugableAuthentication {
         ? userPayload
         : {};
     const curDate = new Date();
+    let tokenExpireDate = null;
     let validationToken = await this.#validationTokenModel
       .findOne(
         { userId, type: validationType, expiresIn: { $gte: curDate } },
@@ -2135,6 +2154,9 @@ class PlugableAuthentication {
         }
       )
       .exec();
+    if (validationToken && validationToken._id && validationToken.expiresIn) {
+      tokenExpireDate = new Date(validationToken.expiresIn);
+    }
     if (!validationToken) {
       const token = await createJwtToken(
         validUserPayload,
@@ -2144,6 +2166,7 @@ class PlugableAuthentication {
       const encodedToken = encryptString(token, this.#encryptSecret);
       const { exp } = await decodeJwtToken(token, this.#jwtSecret);
       const expireDate = new Date(exp * 1000);
+      tokenExpireDate = expireDate;
       await this.#validationTokenModel
         .findOneAndDelete({
           userId,
@@ -2160,7 +2183,7 @@ class PlugableAuthentication {
       );
     }
     const shortToken = encodeToBase64(validationToken._id.toString());
-    return shortToken;
+    return { token: shortToken, expiresIn: tokenExpireDate };
   };
 
   #verifyValidationToken = async (token, invalidTokenMsg, noTokenMsg) => {

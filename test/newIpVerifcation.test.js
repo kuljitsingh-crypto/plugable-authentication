@@ -1,4 +1,4 @@
-const { expect } = require('chai');
+const { expect } = require("chai");
 const {
   withOptionsPaInstanceCreator,
   paOptions,
@@ -14,19 +14,19 @@ const {
   getRandomeDigitOfLen,
   userIpAddress,
   userCsrfToken,
-} = require('./testHelper');
+} = require("./testHelper");
 
-const descriptionName = '#NewIpVerify';
+const descriptionName = "#NewIpVerify";
 
 describe(descriptionName, function () {
   const shouldExecute = isSingleTestFileExceutionMatchFile(descriptionName);
   if (shouldExecute) {
     let shortTok = null;
-    const sendTokenFrIpValidation = (shortToken, user) => {
+    const sendTokenFrIpValidation = (shortToken, tokenExpiresIn, user) => {
       shortTok = shortToken;
-      console.log(shortTok);
+      console.log(shortTok, tokenExpiresIn);
     };
-    context('new Ip address verification', function () {
+    context("new Ip address verification", function () {
       const paInstance = withOptionsPaInstanceCreator({
         uri: paOptions.uri,
         collection: paOptions.collectionName,
@@ -36,15 +36,15 @@ describe(descriptionName, function () {
         tokenSenderFrIpValidationCb: sendTokenFrIpValidation,
       })();
       const middleware = paInstance.middlewares();
-      it('should have login middleware', function () {
+      it("should have login middleware", function () {
         expect(middleware)
-          .to.have.property('loginMiddleware')
-          .that.is.a('function');
+          .to.have.property("loginMiddleware")
+          .that.is.a("function");
       });
-      it('should have newIpAddrCheck middleware', function () {
+      it("should have newIpAddrCheck middleware", function () {
         expect(middleware)
-          .to.have.property('newIpAddrCheckMiddleware')
-          .that.is.a('function');
+          .to.have.property("newIpAddrCheckMiddleware")
+          .that.is.a("function");
       });
       it('should throw error "You\'re tring to login with different IP address.Please allow this, if you want to countinue."', function (done) {
         const { loginMiddleware } = paInstance.middlewares();
@@ -68,26 +68,26 @@ describe(descriptionName, function () {
           .then(() => {
             expect(express.getResponseStatus).to.throw(
               Error,
-              'Cannot add new IP address. Missing a required value.'
+              "Cannot add new IP address. Missing a required value."
             );
             done();
           });
       });
-      it('should add New Ip addr to db', function (done) {
+      it("should add New Ip addr to db", function (done) {
         const { newIpAddrCheckMiddleware } = paInstance.middlewares();
         const express = dummyExpress({ userIp: userIpAddress.ip2 });
         express
           .postHandler(newIpAddrCheckMiddleware, { token: shortTok })()
           .then(() => {
             const resp = express.getResponseStatus();
-            if (resp.toLowerCase() !== 'ok') {
+            if (resp.toLowerCase() !== "ok") {
               return;
             }
 
             done();
           });
       });
-      it('should logged in user with email', function (done) {
+      it("should logged in user with email", function (done) {
         const { loginMiddleware } = paInstance.middlewares();
         const express = dummyExpress({ userIp: userIpAddress.ip2 });
         const { email, password } = getTestUserEmailPwdCredential();
@@ -95,13 +95,13 @@ describe(descriptionName, function () {
           .postHandler(loginMiddleware, { email, password })()
           .then(() => {
             const resp = express.getResponseStatus();
-            if (resp.toLowerCase() !== 'ok') {
+            if (resp.toLowerCase() !== "ok") {
               return;
             }
             const user = express.getUserDetails();
             csrfToken = user.csrfToken;
-            expect(user).to.a('object');
-            expect(user).to.have.property('email').that.is.equal(email);
+            expect(user).to.a("object");
+            expect(user).to.have.property("email").that.is.equal(email);
             done();
           });
       });

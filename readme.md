@@ -161,8 +161,8 @@ app.post('/change-pwd', changePasswordMiddleware(), (req, res) => {
 });
 
 app.post('/reset-pwd', resetPasswordMiddleware(), (req, res) => {
-  //attach user details and validation token in request object
-  console.log(req.validationToken, req.user);
+   //attach user details ,validation token and token expire time in request object
+    console.log(req.validationToken, req.user,req.tokenExpiresIn );
   res.sendStatus(200);
 });
 
@@ -176,8 +176,8 @@ app.post(
   '/auth-verify-gen',
   generateTokenForAuthVerificationMiddleware(),
   (req, res) => {
-    //attach user details and validation token in request object
-    console.log(req.validationToken, req.user);
+    //attach user details ,validation token and token expire time in request object
+    console.log(req.validationToken, req.user,req.tokenExpiresIn );
     res.sendStatus(200);
   }
 );

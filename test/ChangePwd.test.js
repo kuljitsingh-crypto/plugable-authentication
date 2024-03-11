@@ -84,24 +84,6 @@ describe(descriptionName, function () {
             done();
           });
       });
-      // it("should throw error 'Your old and new authentication information must different.'", function (done) {
-      //   const { changePasswordMiddleware } = paInstance.middlewares();
-      //   const express = dummyExpress();
-      //   const { email, password } = getTestUserEmailPwdCredential();
-      //   express
-      //     .postHandler(changePasswordMiddleware, {
-      //       auth: email,
-      //       oldPassword: password,
-      //       newPassword: password,
-      //     })()
-      //     .then(() => {
-      //       expect(express.getResponseStatus).to.throw(
-      //         Error,
-      //         "Your old and new authentication information must different."
-      //       );
-      //       done();
-      //     });
-      // });
       it("should throw error 'Your CSRF token is invalid.'", function (done) {
         const { changePasswordMiddleware } = paInstance.middlewares();
         const express = dummyExpress();

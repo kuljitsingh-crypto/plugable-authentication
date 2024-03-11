@@ -130,6 +130,12 @@ module.exports.dummyExpress = (details) => {
       getUserCsrfToken() {
         return this.getUserCsrfToken;
       },
+      getValidationToken() {
+        return this.validationToken;
+      },
+      getTokenExpiryTime() {
+        return this.tokenExpiresIn;
+      },
     },
     response = {
       __statusCode: 200,
@@ -182,6 +188,12 @@ module.exports.dummyExpress = (details) => {
     },
     getUserDetails() {
       return request.getUser();
+    },
+    getValidationToken() {
+      return request.getValidationToken();
+    },
+    getTokenExpiryTime() {
+      return request.getTokenExpiryTime();
     },
     getUserCsrfToken() {
       return request.getUserCsrfToken();
