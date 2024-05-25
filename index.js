@@ -8,6 +8,7 @@ const { isEmpty, includes } = require("lodash");
 const CryptoJS = require("crypto-js");
 const validator = require("validator");
 
+const USERS_PAGE_LIMIT = 100;
 const EMAIL_AUTH_KEY = "email";
 const OTP_AUTH_KEY = "otp";
 const NEW_IP_ADDR_TOKEN_NAME = "token";
@@ -692,10 +693,11 @@ const getReqUserCsrfToken = (req) =>
 //10) new csrf token - done - testing done
 //11) generate token for auth verification - done - testing done
 //12) Reset Password token validator - done - testing done
-//11) get current user details -
-//12) delete curren user -
+//11) get current user details - done - testing done
+//12) delete curren user - done - testing done
 
 class PlugableAuthentication {
+  static #instanceObj = {};
   #mongoURI = null;
   #collectionName = null;
   #mongoConnection = null;
@@ -730,7 +732,7 @@ class PlugableAuthentication {
   #csrfTokenExpireTime = null;
   #tokenSenderFrIpValidationCb = null;
   #verifyAuthKeyOnCreation = false;
-  #sentizeObjectBeforeAdd = true;
+  #santizeObjectBeforeAdd = true;
 
   /**
    * @param {object} options
@@ -757,14 +759,29 @@ class PlugableAuthentication {
    * refreshToken:string,
    * csrfToken:string,
    * metadata?:object,
-   * password?: string,browser:string,ipAddr:string})=>Promise<void>} [options.tokenSenderFrIpValidationCb] - defualt null
+   * publicData?:object,
+   * privateData?:object,
+   * password?: string,browser:string,ipAddr:string})=>Promise<void>} [options.sendTokenForIpValidation] - defualt null
    * @param {string} [options.csrfTokenExpireTime] - default null Ex:"10h"/"7d"
    * @param {boolean} [options.verifyAuthKeyOnCreation] - default false.
    * If you want to mark your authentication key as verified on creation. set as true.
-   * @param {boolean} [options.sentizeObjectBeforeAdd] - default true.
+   * @param {boolean} [options.santizeObjectBeforeAdd] - default true.
    * Santize metadata,privateData and publicData before adding to the database.
    */
   constructor(options) {
+    const { collection } = options;
+    if (!collection || typeof collection !== "string") {
+      throw new Error("Mongo Collection name is required");
+    }
+    if (PlugableAuthentication.#instanceObj.hasOwnProperty(collection)) {
+      return PlugableAuthentication.#instanceObj[collection];
+    }
+    PlugableAuthentication.#instanceObj[collection] = this;
+    this.#initalizeInstance(options);
+    return PlugableAuthentication.#instanceObj[collection];
+  }
+
+  #initalizeInstance(options) {
     const {
       uri,
       collection,
@@ -784,10 +801,10 @@ class PlugableAuthentication {
       disableIpMismatchValidation,
       newIpAddrTokenName,
       jwtOptnFrIpValidation,
-      tokenSenderFrIpValidationCb,
+      sendTokenForIpValidation,
       csrfTokenExpireTime,
       verifyAuthKeyOnCreation,
-      sentizeObjectBeforeAdd,
+      santizeObjectBeforeAdd,
     } = options || {};
     if (!uri || typeof uri !== "string") {
       throw new Error("Mongo URI is required");
@@ -865,8 +882,8 @@ class PlugableAuthentication {
         expiresIn: jwtOptnFrIpValidation.expiresIn || JWT_EXPIRES_IN_TIME,
       };
     }
-    if (typeof tokenSenderFrIpValidationCb === "function") {
-      this.#tokenSenderFrIpValidationCb = tokenSenderFrIpValidationCb;
+    if (typeof sendTokenForIpValidation === "function") {
+      this.#tokenSenderFrIpValidationCb = sendTokenForIpValidation;
     }
     if (csrfTokenExpireTime && typeof csrfTokenExpireTime === "string") {
       this.#csrfTokenExpireTime = csrfTokenExpireTime;
@@ -878,10 +895,10 @@ class PlugableAuthentication {
       this.#verifyAuthKeyOnCreation = verifyAuthKeyOnCreation;
     }
     if (
-      typeof sentizeObjectBeforeAdd === "boolean" &&
-      sentizeObjectBeforeAdd === false
+      typeof santizeObjectBeforeAdd === "boolean" &&
+      santizeObjectBeforeAdd === false
     ) {
-      this.#sentizeObjectBeforeAdd = sentizeObjectBeforeAdd;
+      this.#santizeObjectBeforeAdd = santizeObjectBeforeAdd;
     }
     this.#modelReadyEventEmitter = new EventEmitter();
     this.#mongoConnect(uri);
@@ -1000,7 +1017,7 @@ class PlugableAuthentication {
       try {
         const errorMessage = this.#validateRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
         }
         const tokenDetails = await this.#verifyUserLogin(
           req,
@@ -1013,7 +1030,7 @@ class PlugableAuthentication {
         if (!tokenDetails) {
           const msg =
             "You're tring to login with different IP address.Please allow this, if you want to countinue.";
-          return res.status(400).send(msg);
+          this.#createAndThrowError(msg, 401);
         }
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
         next();
@@ -1038,9 +1055,9 @@ class PlugableAuthentication {
       await this.#waitUntilModelReady();
       const { errorHandler } = options || {};
       try {
-        const errorMessage = this.#validateRequestData(req);
+        const errorMessage = this.#validateRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
         }
         await this.#createUser(req);
         next();
@@ -1068,7 +1085,7 @@ class PlugableAuthentication {
         const token = requestBody[this.#newIpAddrTokenName];
         if (!token || typeof token !== "string") {
           const msg = "Cannot add new IP address. Missing a required value.";
-          return res.status(400).send(msg);
+          this.#createAndThrowError(msg, 400);
         }
         const userPayload = await this.#errorRespWrapper(
           res,
@@ -1107,7 +1124,7 @@ class PlugableAuthentication {
         const cookieDetail = getUserCookies(req, this.#cookieId);
         const user = await this.#verifyToken(cookieDetail, false);
         if (!user) {
-          throw new Error(NEED_AUTHENTICATION_BEFORE_USE);
+          this.#createAndThrowError(NEED_AUTHENTICATION_BEFORE_USE, 401);
         }
         await this.#verifyUserIpAddrAndCsrfToken(req, {
           userId: user.id,
@@ -1138,15 +1155,10 @@ class PlugableAuthentication {
       await this.#waitUntilModelReady();
       const { errorHandler } = params || {};
       try {
-        const cookieDetail = getUserCookies(req, this.#cookieId);
-        const user = await this.#verifyToken(cookieDetail, false);
-        if (!user) {
-          throw new Error(NEED_AUTHENTICATION_BEFORE_USE);
-        }
-        await this.#verifyUserIpAddrAndCsrfToken(req, {
-          userId: user.id,
-          csrfToken: null,
+        const { user } = await this.#validateUserAuthentication(req, {
           throwErrorOnInvalidCsrfToken: false,
+          throwErrorOnAccessTokenExpire: false,
+          includeUserCsrfToken: false,
         });
         const userId = user.id;
         const userNewDetails = await this.#createNewCsrfToken(userId);
@@ -1173,19 +1185,12 @@ class PlugableAuthentication {
       await this.#waitUntilModelReady();
       const { errorHandler } = params || {};
       try {
-        const cookieDetail = getUserCookies(req, this.#cookieId);
-
-        const user = await this.#verifyToken(cookieDetail, false, true);
-        if (!user) {
-          throw new Error(NEED_AUTHENTICATION_BEFORE_USE);
-        }
-        const { isCsrfTokenExpired } = await this.#verifyUserIpAddrAndCsrfToken(
-          req,
-          {
-            userId: user.id,
-            csrfToken: user.csrfToken,
-          }
-        );
+        const { user, isCsrfTokenExpired } =
+          await this.#validateUserAuthentication(req, {
+            throwErrorOnAccessTokenExpire: false,
+            createNewAccessTokenOnExpires: true,
+            includeUserCsrfToken: true,
+          });
         const { tokenDetails, ...restUserDetails } = user;
         const newUserDetails = await this.#checkAndCreateNewCsrfToken(
           restUserDetails,
@@ -1215,15 +1220,10 @@ class PlugableAuthentication {
       await this.#waitUntilModelReady();
       const { errorHandler } = params || {};
       try {
-        const cookieDetail = getUserCookies(req, this.#cookieId);
-
-        const user = await this.#verifyToken(cookieDetail, false, true);
-        if (!user) {
-          throw new Error(NEED_AUTHENTICATION_BEFORE_USE);
-        }
-        await this.#verifyUserIpAddrAndCsrfToken(req, {
-          userId: user.id,
-          csrfToken: user.csrfToken,
+        const { user } = await this.#validateUserAuthentication(req, {
+          throwErrorOnAccessTokenExpire: false,
+          createNewAccessTokenOnExpires: false,
+          includeUserCsrfToken: true,
         });
         const userAuth = user[this.#authKeyName];
         const userId = user.id;
@@ -1267,29 +1267,20 @@ class PlugableAuthentication {
       try {
         const errorMessage = this.#validateChangeAuthRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
         }
+        const { user, isCsrfTokenExpired } =
+          await this.#validateUserAuthentication(req, {
+            throwErrorOnAccessTokenExpire: false,
+            createNewAccessTokenOnExpires: true,
+            includeUserCsrfToken: true,
+          });
         const { oldAuth, newAuth } = req.body;
         if (oldAuth === newAuth) {
-          return res
-            .status(400)
-            .send(
-              "Your old and new authentication information must different."
-            );
+          const msg =
+            '"Your old and new authentication information must different."';
+          this.#createAndThrowError(msg, 400);
         }
-        const cookieDetail = getUserCookies(req, this.#cookieId);
-        const user = await this.#verifyToken(cookieDetail, false, true);
-        if (!user) {
-          throw new Error(NEED_AUTHENTICATION_BEFORE_USE);
-        }
-        const { isCsrfTokenExpired } = await this.#verifyUserIpAddrAndCsrfToken(
-          req,
-          {
-            userId: user.id,
-            csrfToken: user.csrfToken,
-          }
-        );
-
         const requestBody = {
           ...(req.body || {}),
           [this.#authKeyName]: oldAuth,
@@ -1341,21 +1332,14 @@ class PlugableAuthentication {
       try {
         const errorMessage = this.#validateChangePwdRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
         }
-
-        const cookieDetail = getUserCookies(req, this.#cookieId);
-        const user = await this.#verifyToken(cookieDetail, false, true);
-        if (!user) {
-          throw new Error(NEED_AUTHENTICATION_BEFORE_USE);
-        }
-        const { isCsrfTokenExpired } = await this.#verifyUserIpAddrAndCsrfToken(
-          req,
-          {
-            userId: user.id,
-            csrfToken: user.csrfToken,
-          }
-        );
+        const { user, isCsrfTokenExpired } =
+          await this.#validateUserAuthentication(req, {
+            throwErrorOnAccessTokenExpire: false,
+            createNewAccessTokenOnExpires: true,
+            includeUserCsrfToken: true,
+          });
         const { newPassword, auth, oldPassword } = req.body || {};
         const requestBody = {
           ...(req.body || {}),
@@ -1368,9 +1352,9 @@ class PlugableAuthentication {
           user.password
         );
         if (isNewPwdIsSame) {
-          return res
-            .status(400)
-            .send("New password must be different from previous one.");
+          const errorMessage =
+            "New password must be different from previous one.";
+          this.#createAndThrowError(errorMessage, 400);
         }
         const newHashPassword = await createHashPasswword(newPassword);
         const newUserDetails = await this.#updateUserByQuery(
@@ -1413,7 +1397,7 @@ class PlugableAuthentication {
       try {
         const errorMessage = this.#validateResetPwdRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
         }
         const { auth } = req.body || {};
         const preSavedUser = await this.#getUserByQuery(
@@ -1468,7 +1452,7 @@ class PlugableAuthentication {
       try {
         const errorMessage = this.#validateResetPwdVerifyRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
         }
         const { auth, token, newPassword } = req.body || {};
         const userPayload = await await this.#errorRespWrapper(
@@ -1488,7 +1472,7 @@ class PlugableAuthentication {
           tokenType !== tokenValidationType.resetPwd
         ) {
           const msg = `User's ${this.#authKeyName} does not match with requested one. Please double check and try again.`;
-          return res.status(400).send(msg);
+          this.#createAndThrowError(msg, 400);
         }
         const isPwdSame = await isUserPasswordSame(newPassword, prePasswords);
         if (isPwdSame) {
@@ -1538,13 +1522,23 @@ class PlugableAuthentication {
       try {
         const errorMessage = this.#validateVerifyAuthGenRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
+        }
+        const { user: preSavedUser, isCsrfTokenExpired } =
+          await this.#validateUserAuthentication(req, {
+            throwErrorOnAccessTokenExpire: false,
+            createNewAccessTokenOnExpires: true,
+            includeUserCsrfToken: true,
+          });
+        if (preSavedUser.isVerified) {
+          const errorMessage = `User with given ${this.#authKeyName} has already been verified.`;
+          this.#createAndThrowError(errorMessage, 401);
         }
         const { auth } = req.body || {};
-        const preSavedUser = await this.#getUserByQuery(
-          { [this.#authKeyName]: auth },
-          true
-        );
+        if (preSavedUser[this.#authKeyName] !== auth) {
+          const errorMessage = `User's ${this.#authKeyName} does not match with requested one. Please double check and try again.`;
+          this.#createAndThrowError(errorMessage, 401);
+        }
         const userPayload = {
           [this.#authKeyName]: auth,
           id: preSavedUser.id,
@@ -1563,8 +1557,12 @@ class PlugableAuthentication {
             userPayload,
             jwtOptions
           );
+        const userNewDetails = await this.#checkAndCreateNewCsrfToken(
+          preSavedUser,
+          isCsrfTokenExpired
+        );
         req.validationToken = shortToken;
-        req.user = preSavedUser;
+        req.user = userNewDetails;
         req.tokenExpiresIn = tokenExpiresIn;
         next();
       } catch (e) {
@@ -1591,7 +1589,19 @@ class PlugableAuthentication {
       try {
         const errorMessage = this.#validateVerifyAuthVerRequestData(req.body);
         if (errorMessage) {
-          return res.status(400).send(errorMessage);
+          this.#createAndThrowError(errorMessage, 400);
+        }
+        const { user: preSavedUser } = await this.#validateUserAuthentication(
+          req,
+          {
+            throwErrorOnAccessTokenExpire: false,
+            createNewAccessTokenOnExpires: true,
+            includeUserCsrfToken: true,
+          }
+        );
+        if (preSavedUser.isVerified) {
+          const errorMessage = `User with given ${this.#authKeyName} has already been verified.`;
+          this.#createAndThrowError(errorMessage, 400);
         }
         const { auth, token } = req.body || {};
         const userPayload = await this.#errorRespWrapper(
@@ -1602,15 +1612,18 @@ class PlugableAuthentication {
           VERIFY_AUTH_TOKEN_VERIFICATION_FAIL,
           VERIFY_AUTH_TOKEN_VERIFICATION_FAIL
         );
+        const preSavedUserAuthValue = preSavedUser[this.#authKeyName];
         const savedAuthValue = userPayload[this.#authKeyName];
         const tokenType = userPayload.tokenType;
         const userId = userPayload.id;
         if (
           savedAuthValue !== auth ||
+          savedAuthValue !== preSavedUserAuthValue ||
+          auth !== preSavedUserAuthValue ||
           tokenType !== tokenValidationType.authCheck
         ) {
           const msg = `User's ${this.#authKeyName} does not match with requested one. Please double check and try again.`;
-          return res.status(400).send(msg);
+          this.#createAndThrowError(msg, 400);
         }
         const csrfToken = await createCsrfToken(
           userId,
@@ -1719,23 +1732,18 @@ class PlugableAuthentication {
   }
 
   //==============user helper==================//
+
   /**
+   *
    * @param {object} details
-   * @param {{auth?:string,id?:string,metadata?:object,privateData?:object,publicData?:object}} details.query -
-   * auth value is used like this email=auth,if authKeyName='email'.
-   * For metadata, publicData or privateData, use like this metadata:{key:string,'a.b':number}
-   * @param {boolean} [details.throwErrOnUserNotFound]
-   * @param {string} [details.userNotFoundMsg]
+   * @param {{auth?:string,id?:string,metadata?:object,privateData?:object,publicData?:object}} details.query
+   * @returns {object|null}
    */
-  #getUserByQueryHelper = async (details) => {
+  #formatQuery(details) {
     const isValidDetails = isValidObject(details);
     if (!isValidDetails) return null;
 
-    const {
-      query,
-      throwErrOnUserNotFound = false,
-      userNotFoundMsg = "",
-    } = details || {};
+    const { query } = details || {};
 
     const isVaildQuery = isValidObject(query);
 
@@ -1785,6 +1793,23 @@ class PlugableAuthentication {
     if (isEmpty(correctQuery)) {
       return null;
     }
+    return correctQuery;
+  }
+
+  /**
+   * @param {object} details
+   * @param {{auth?:string,id?:string,metadata?:object,privateData?:object,publicData?:object}} details.query -
+   * auth value is used like this email=auth,if authKeyName='email'.
+   * For metadata, publicData or privateData, use like this metadata:{key:string,'a.b':number}
+   * @param {boolean} [details.throwErrOnUserNotFound]
+   * @param {string} [details.userNotFoundMsg]
+   * @return {Promise<object|null>}
+   */
+  #getUserByQueryHelper = async (details) => {
+    const correctQuery = this.#formatQuery(details);
+    if (!correctQuery) return null;
+    const { throwErrOnUserNotFound = false, userNotFoundMsg = "" } =
+      details || {};
     await this.#waitUntilModelReady();
     return this.#getUserByQuery(
       correctQuery,
@@ -1794,27 +1819,46 @@ class PlugableAuthentication {
   };
 
   /**
-   * @param {{auth?:string,id?:string,metadata?:object}} updateQuery - auth value is used like this email=auth,if authKeyName='email'.
-   * @param {{metadata?:object}} updateData
+   * @param {{auth?:string,id?:string,metadata?:object,privateData?:object,publicData?:object}} query -
+   * auth value is used like this email=auth,if authKeyName='email'.
+   * For metadata, publicData or privateData, use like this metadata:{key:string,'a.b':number}
+   * @param {number} page
+   * @param {number} perPage
+   * @return {Promise<array>}
+   */
+  #getUsersByQueryHelper = async (
+    query,
+    page = 1,
+    perPage = USERS_PAGE_LIMIT
+  ) => {
+    const correctQuery = this.#formatQuery({ query });
+    if (!correctQuery) return [];
+    await this.#waitUntilModelReady();
+    return this.#getUsersByQuery(correctQuery, page, perPage);
+  };
+
+  /**
+   * @param {{auth?:string,id?:string,metadata?:object,publicData?:object,privateData?:data}} updateQuery -
+   * auth value is used like this email=auth,if authKeyName='email'.
+   * @param {{metadata?:object,publicData?:object,privateData?:data}} updateData
    */
   #updateUserByQueryHelper = async (updateQuery, updateData) => {
-    const isValidParams =
-      isValidObject(updateQuery) && isValidObject(updateData);
-
+    updateQuery = this.#formatQuery({ query: updateQuery });
+    const isValidParams = isValidObject(updateData);
     if (!isValidParams) return null;
     const user = await this.#getUserByQueryHelper({
       query: updateQuery,
       throwErrOnUserNotFound: false,
     });
     if (!user) return null;
-    const { metadata, publidData, privateData } = updateData;
+    const { metadata, publicData, privateData } = updateData;
     const extraUpdateData = {
       metadata: isValidObject(metadata)
         ? { ...user.metadata, ...this.#santizeObject(metadata) }
         : user.metadata,
-      publidData: isValidObject(publidData)
-        ? { ...user.publidData, ...this.#santizeObject(publidData) }
-        : user.publidData,
+      publicData: isValidObject(publicData)
+        ? { ...user.publicData, ...this.#santizeObject(publicData) }
+        : user.publicData,
       privateData: isValidObject(privateData)
         ? { ...user, ...this.#santizeObject(privateData) }
         : user.privateData,
@@ -1834,9 +1878,21 @@ class PlugableAuthentication {
       const msg =
         userNotFoundMsg ||
         `User with given ${this.#authKeyName} does not exists. Please double-check and try again.`;
-      throw new Error(msg);
+      this.#createAndThrowError(msg, 400);
     }
     return user ? getUserDetailsFrmMongo(user) : null;
+  };
+
+  #getUsersByQuery = async (query, page = 1, perPage = USERS_PAGE_LIMIT) => {
+    const currentPage = (page - 1) * perPage;
+    const pipline = [
+      { $match: query },
+      { $project: { _id: 0, __v: 0 } },
+      { $skip: currentPage },
+      { $limit: perPage },
+    ];
+    const users = await this.#model.aggregate(pipline).exec();
+    return users;
   };
 
   #createUser = async (req) => {
@@ -1848,16 +1904,16 @@ class PlugableAuthentication {
 
     if (!!preSavedUser) {
       const msg = `User with given ${this.#authKeyName} already exists. Please log in with your registered ${this.#authKeyName}.`;
-      throw new Error(msg);
+      this.#createAndThrowError(msg, 400);
     }
-    const { publidData, privateData, metadata, password } = requestBody;
+    const { publicData, privateData, metadata, password } = requestBody;
     const hashPassword = {};
     if (!!password) {
       hashPassword.password = await createHashPasswword(password);
     }
     const extraDataMaybe = {
-      publicData: isValidObject(publidData)
-        ? this.#santizeObject(publidData)
+      publicData: isValidObject(publicData)
+        ? this.#santizeObject(publicData)
         : {},
       privateData: isValidObject(privateData)
         ? this.#santizeObject(privateData)
@@ -1914,9 +1970,34 @@ class PlugableAuthentication {
     return getUserDetailsFrmMongo(userNewDetails);
   };
 
-  #excludeUserPrivateData = (user) => {
-    const { privateData, ...rest } = user;
-    return rest;
+  /**
+   *@description It removes the specified key from the user details. Try to use less nested key in keys array
+   * @param {object} user
+   * @param {string[]} keys
+   * @returns
+   */
+  #removeKeysFromUserDetails = (user, keys) => {
+    const userCopy = JSON.parse(JSON.stringify(user));
+    const isNestedKey = (key) => key.includes(".");
+    function removeNestedKeys(obj, key) {
+      const keys = key.split(".");
+      let current = obj,
+        i;
+      const keysLen = keys.length;
+      for (i = 0; i < keysLen - 1; i++) {
+        current = current[keys[i]];
+      }
+      delete current[keys[keysLen - 1]];
+    }
+    let key;
+    for (key of keys) {
+      if (isNestedKey(key)) {
+        removeNestedKeys(userCopy, key);
+      } else {
+        delete userCopy[key];
+      }
+    }
+    return userCopy;
   };
 
   //================ verification helpers =================//
@@ -2017,7 +2098,7 @@ class PlugableAuthentication {
       typeof refreshToken === "string" &&
       typeof accessToken === "string";
     if (!hasValidTokenDetails) {
-      throw new Error(INVALID_TOKEN_DETAILS);
+      this.#createAndThrowError(INVALID_TOKEN_DETAILS, 401);
     }
     const rawRefreshToken = decryptString(refreshToken, this.#encryptSecret);
     const [accessTokenValue, refreshTokenValue] = await Promise.all([
@@ -2052,6 +2133,7 @@ class PlugableAuthentication {
         lean: true,
       })
       .exec();
+    if (!user) return null;
     return Object.assign({}, getUserDetailsFrmMongo(user), tokenDetailsMaybe);
   }
 
@@ -2067,7 +2149,7 @@ class PlugableAuthentication {
       .exec();
 
     if (!savedIpAddr && throwErrorOnNewAddr) {
-      throw new Error(errorMsg || NEW_IP_ADDR_FOUND);
+      this.#createAndThrowError(errorMsg || NEW_IP_ADDR_FOUND, 401);
     }
     return savedIpAddr;
   }
@@ -2085,12 +2167,12 @@ class PlugableAuthentication {
         this.#encryptSecret
       );
       if (!isCsrfTokenValid && throwErrorOnInvalidCsrfToken) {
-        throw new Error(errorMsg || INVALID_CSRF_TOKEN);
+        this.#createAndThrowError(errorMsg || INVALID_CSRF_TOKEN, 401);
       }
       return { status: isCsrfTokenValid, isExpired };
     } catch (e) {
       if (throwErrorOnInvalidCsrfToken) {
-        throw new Error(errorMsg || INVALID_CSRF_TOKEN);
+        this.#createAndThrowError(errorMsg || INVALID_CSRF_TOKEN, 401);
       }
       return { status: false };
     }
@@ -2166,7 +2248,7 @@ class PlugableAuthentication {
     const authValue = requestBody[this.#authKeyName];
     const password = requestBody.password;
     if (!authValue) {
-      throw new Error("Invalid user authentication details.");
+      this.#createAndThrowError("Invalid user authentication details.", 401);
     }
     let isUserVerified = false;
     const isSameAuthkeyValue = authValue === refUser[this.#authKeyName];
@@ -2189,9 +2271,48 @@ class PlugableAuthentication {
           : "";
       const msg = `The ${this.#authKeyName}${secndValidationLabelName} you provided don't match our records. Please double-check and try again.`;
 
-      throw new Error(msg);
+      this.#createAndThrowError(msg, 401);
     }
   }
+  /**
+   * @param {Request} req
+   * @param {object} options
+   * @param {boolean} [options.throwErrorOnAccessTokenExpire]
+   * @param {boolean} [options.createNewAccessTokenOnExpires]
+   * @param {boolean} [options.includeUserCsrfToken]
+   * @param {boolean} [options.throwErrOnNewIpAddr]
+   * @param {boolean} [options.throwErrorOnInvalidCsrfToken]
+   * @param {string} [options.newIpAddrErrMsg]
+   * @param {string} [options.invalidCsrfTokenErrMsg]
+   *
+   */
+  #validateUserAuthentication = async (req, options = {}) => {
+    const {
+      includeUserCsrfToken,
+      throwErrorOnAccessTokenExpire,
+      createNewAccessTokenOnExpires,
+      ...rest
+    } = options;
+    const cookieDetail = getUserCookies(req, this.#cookieId);
+    const user = await this.#verifyToken(
+      cookieDetail,
+      throwErrorOnAccessTokenExpire,
+      createNewAccessTokenOnExpires
+    );
+    if (!user) {
+      this.#createAndThrowError(NEED_AUTHENTICATION_BEFORE_USE, 401);
+    }
+    const tokenOptions = {
+      ...rest,
+      userId: user.id,
+      csrfToken: includeUserCsrfToken ? user.csrfToken : null,
+    };
+    const extraData = await this.#verifyUserIpAddrAndCsrfToken(
+      req,
+      tokenOptions
+    );
+    return { user, ...extraData };
+  };
 
   // ============ validation token helper===================//
   #generateValidationToken = async (
@@ -2201,11 +2322,14 @@ class PlugableAuthentication {
     jwtOptions = {}
   ) => {
     if (!userId) {
-      throw new Error("cannot generate validation token without a userId");
+      this.#createAndThrowError(
+        "cannot generate validation token without a userId",
+        400
+      );
     }
     const isValidationCorrect = tokenValidationValuesSet.has(validationType);
     if (!isValidationCorrect) {
-      throw new Error("Validation type not supported");
+      this.#createAndThrowError("Validation type not supported", 400);
     }
     const validUserPayload =
       typeof userPayload === "object" && userPayload.constructor === Object
@@ -2260,14 +2384,14 @@ class PlugableAuthentication {
       const isValidId = mongoose.isValidObjectId(id);
       if (!isValidId) {
         const msg = invalidTokenMsg || "Invalid value.";
-        throw new Error(msg);
+        this.#createAndThrowError(msg, 400);
       }
       const tokeRef = await this.#validationTokenModel.findById(id, null, {
         lean: true,
       });
       if (!tokeRef) {
         const msg = noTokenMsg || "Invalid value.";
-        throw new Error(msg);
+        this.#createAndThrowError(msg, 400);
       }
       const { longToken } = tokeRef;
       const decodedToken = decryptString(longToken, this.#encryptSecret);
@@ -2290,7 +2414,7 @@ class PlugableAuthentication {
     const isValidId = mongoose.isValidObjectId(id);
     if (!isValidId) {
       const msg = invalidTokenMsg || "Invalid value.";
-      throw new Error(msg);
+      this.#createAndThrowError(msg, 400);
     }
     await this.#validationTokenModel.findByIdAndDelete(id);
   };
@@ -2312,7 +2436,8 @@ class PlugableAuthentication {
       return;
     }
     const message = err?.message || defaultMessage;
-    return res.status(400).send(message);
+    const status = err?.status || 400;
+    return res.status(status).send(message);
   }
 
   #validationErrorHandler(validationResult) {
@@ -2336,40 +2461,51 @@ class PlugableAuthentication {
     return errorMessage;
   }
 
+  #createAndThrowError(msg, status) {
+    const error = new Error();
+    error.message = msg;
+    error.status = status;
+    throw error;
+  }
+
   //================ object santizer ==================//
-  #santizeValue(value) {
+  #santizeValue = (value) => {
     if (typeof value === "string") {
       value = validator.trim(value);
       value = validator.escape(value);
       if (validator.isEmail(value)) {
         value = validator.normalizeEmail(value);
       }
-    } else if (typeof value === "object" && obj !== null) {
+    } else if (typeof value === "object" && value !== null) {
       if (Array.isArray(value)) {
-        value = value.map(this.#santizeObject);
+        value = value.map(this.#santizeObject.bind(this));
       } else {
         value = this.#santizeObject(value);
       }
     }
     return value;
-  }
+  };
 
   #santizeObject(obj) {
-    if (!this.#sentizeObjectBeforeAdd) return obj;
-    if (typeof obj === "object" && obj !== null) {
-      if (Array.isArray(obj)) {
-        return obj.map(this.#santizeValue);
-      } else {
-        const santizeObj = {};
-        for (const key in obj) {
-          if (obj.hasOwnProperty(key)) {
-            santizeObj[key] = this.#santizeValue(obj[key]);
-          }
-        }
-        return santizeObj;
-      }
+    if (!this.#santizeObjectBeforeAdd) return obj;
+    const isObjectType = typeof obj === "object" && obj !== null;
+    if (!isObjectType) return this.#santizeValue(obj);
+    if (Array.isArray(obj)) {
+      return obj.map(this.#santizeValue.bind(this));
     }
-    return this.#santizeValue(obj);
+    if (obj.constructor === Object) {
+      const santizeObj = {};
+      for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+          santizeObj[key] = this.#santizeValue(obj[key]);
+        }
+      }
+      return santizeObj;
+    }
+    if (typeof obj.toString === "function") {
+      return this.#santizeValue(obj.toString());
+    }
+    return obj;
   }
 
   middlewares() {
@@ -2398,8 +2534,8 @@ class PlugableAuthentication {
     return {
       getUserDetails: this.#getUserByQueryHelper,
       updateUserDetails: this.#updateUserByQueryHelper,
-      removePrivateDataFromUserDetails: this.#excludeUserPrivateData,
-      //add two methods getUsersDetails and updateUsersDetails
+      removeKeysFromUserDetails: this.#removeKeysFromUserDetails,
+      getUsersDetails: this.#getUsersByQueryHelper,
     };
   }
 }

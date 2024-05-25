@@ -5,11 +5,14 @@
   "main": "index.js",
   "scripts": {
     "test": "mocha --timeout 100000",
-    "single-test": "mocha --timeout 100000 -- -grep"
+    "single-test": "mocha --timeout 100000 -- -grep",
+    "dev-server": "nodemon dev-server/index.js"
   },
   "devDependencies": {
     "chai": "4.1.2",
+    "cookie-parser": "^1.4.6",
     "dotenv": "^16.3.1",
+    "express": "^4.19.2",
     "mocha": "^10.3.0",
     "nodemon": "^3.0.2",
     "prettier": "^3.2.4"
