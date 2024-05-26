@@ -776,12 +776,11 @@ class PlugableAuthentication {
    * @param {{expiresIn: string}} [options.jwtOptnFrIpValidation] - default null Ex: {expiresIn: "10h"/"7d"}
    * @param {(shortToken:string,tokenExpiresIn:Date | null,user:{email: string,
    * id:string,
-   * refreshToken:string,
-   * csrfToken:string,
+   * createdAt:Date,
+   * updatedAt:Date,
    * metadata?:object,
    * publicData?:object,
-   * privateData?:object,
-   * password?: string,browser:string,ipAddr:string})=>Promise<void>} [options.sendTokenForIpValidation] - defualt null
+   * privateData?:object,browser:string,ipAddr:string})=>Promise<void>} [options.sendTokenForIpValidation] - defualt null
    * @param {string} [options.csrfTokenExpireTime] - default null Ex:"10h"/"7d"
    * @param {boolean} [options.verifyAuthKeyOnCreation] - default false.
    * If you want to mark your authentication key as verified on creation. set as true.
@@ -2177,7 +2176,7 @@ class PlugableAuthentication {
         jwtOptions
       );
     await tokenSenderCb(shortToken, tokenExpiresIn, {
-      ...user,
+      ...removeUnnecessayUserDetails(user),
       ...userIpSource,
     });
   }

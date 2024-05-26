@@ -62,7 +62,7 @@ const optionalParams = {
     "Default: '{ algorithm: 'HS256', noTimestamp: false, expiresIn: '1h', notBefore: '0s' }'. Change as per your need.",
   jwtOptnFrIpValidation:
     "Default: null. Example: { expiresIn: '10h'/'7d' }. It is used to modify the token generated during IP address mismatch. Only allowed key is expiresIn. By default, the token expires in 1 day.",
-  tokenSenderFrIpValidationCb:
+  sendTokenForIpValidation:
     'Default: null. It is used when someone tries to login with a different IP address and IP mismatch validation is enabled. Then this function will be called with token and user details. Function format is like this: (shortToken: string, user: { email: string, id: string, refreshToken: string, csrfToken: string, metadata?: object, password?: string, browser: string, ipAddr: string }) => Promise<void>.',
   csrfTokenExpireTime:
     "Default: null. Example: '10h'/'7d'. It is used to modify the token expires time. By default, the token expires in 1 day.",
