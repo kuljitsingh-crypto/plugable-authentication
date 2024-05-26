@@ -58,6 +58,7 @@ const optionalParams = {
   passwordValidationName:
     'Default: \'"Must be between 8 and 256 characters". If you want to write your custom message, please change it.',
   jwtOptions:
+
     "Default: '{ algorithm: 'HS256', noTimestamp: false, expiresIn: '1h', notBefore: '0s' }'. Change as per your need.",
   jwtOptnFrIpValidation:
     "Default: null. Example: { expiresIn: '10h'/'7d' }. It is used to modify the token generated during IP address mismatch. Only allowed key is expiresIn. By default, the token expires in 1 day.",
@@ -67,6 +68,7 @@ const optionalParams = {
     "Default: null. Example: '10h'/'7d'. It is used to modify the token expires time. By default, the token expires in 1 day.",
   verifyAuthKeyOnCreation:
     'Default: false. If you want to mark your authentication key (email) as verified on creation, set as true.',
+  sanitizeObjectBeforeAdd: 'Default true. Sanitize metadata,privateData and publicData before adding to the database.'
 };
 
 const authInstance = new PlugableAuthentication({
@@ -78,9 +80,19 @@ const authInstance = new PlugableAuthentication({
 ### Example usage:
 ``` javascript
 
-const express = require('express');
-const cookieParser = require('cookie-parser');
+require("dotenv").config();
+const express = require("express");
+const cookieParser = require("cookie-parser");
 const app = express();
+const { PlugableAuthentication } = require("../index");
+const { paOptions } = require("./helper");
+
+const authInstance = new PlugableAuthentication({
+  ...paOptions,
+  sendTokenForIpValidation: (shortToken, tokenExpiresIn, user) => {
+    console.log("ip token", shortToken, tokenExpiresIn, user);
+  },
+});
 
 const {
   signupMiddleware,
@@ -89,6 +101,8 @@ const {
   logoutMiddleware,
   newCsrfTokenMiddleware,
   verifyUserTokenMiddleware,
+  getCurrentUserMiddleware,
+  deleteCurrentUserMiddleware,
   changeAuthenticationValueMiddleware,
   changePasswordMiddleware,
   resetPasswordMiddleware,
@@ -97,122 +111,147 @@ const {
   validateTokenForAuthVerificationMiddleware,
 } = authInstance.middlewares();
 
-const {getUserDetails,
-       updateUserDetails}=authInstance.helpers()
+const {
+  getUserDetails,
+  updateUserDetails,
+  removeKeysFromUserDetails,
+  getUsersDetails,
+} = authInstance.helpers();
 
-app.use(express.json({ limit: '200mb' }));
+app.use(express.json({ limit: "200mb" }));
 app.use(cookieParser());
 
 // It is required to read user Ip address.
-app.set('trust proxy', true);
+app.set("trust proxy", true);
 
-app.post('/signup', signupMiddleware(), (req, res) => {
+app.post("/signup", signupMiddleware(), (req, res) => {
   try {
     //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+    console.log(req.user, req.csrfToken);
     res.sendStatus(200);
   } catch (e) {
     console.error(e);
   }
 });
 
-app.post('/login', loginMiddleware(), (req, res) => {
+app.post("/login", loginMiddleware(), (req, res) => {
   try {
-     //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+    //attach user details and csrf token in request object
+    console.log(req.user, req.csrfToken);
     res.sendStatus(200);
   } catch (e) {
     console.error(e);
   }
 });
 
-app.post('/new-ip-addr', newIpAddrCheckMiddleware(), (req, res) => {
+app.post("/new-ip-addr", newIpAddrCheckMiddleware(), (req, res) => {
   res.sendStatus(200);
 });
 
-app.post('/new-csrf-token', newCsrfTokenMiddleware(), (req, res) => {
-     //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+app.post("/new-csrf-token", newCsrfTokenMiddleware(), (req, res) => {
+  //attach user details and csrf token in request object
+  console.log(req.user, req.csrfToken);
   res.status(200).send({ csrfToken: req.csrfToken });
 });
 
-app.get('/logout', logoutMiddleware(), (req, res) => {
-   //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+app.get("/logout", logoutMiddleware(), (req, res) => {
+  //attach user details and csrf token in request object
+  console.log(req.user, req.csrfToken);
   res.sendStatus(200);
 });
 
-app.post('/userDetails', verifyUserTokenMiddleware(), (req, res) => {
-   //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+app.post("/userDetails", verifyUserTokenMiddleware(), (req, res) => {
+  //attach user details and csrf token in request object
+  console.log(req.user, req.csrfToken);
   res.sendStatus(200);
 });
 
-app.post('/change-email', changeAuthenticationValueMiddleware(), (req, res) => {
-   //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+app.get("/current-user", getCurrentUserMiddleware(), (req, res) => {
+  //attach user details and csrf token in request object
+  console.log(req.user, req.csrfToken);
+  res.status(200).send(req.user);
+});
+
+app.delete(
+  "/delete-current-user",
+  deleteCurrentUserMiddleware(),
+  (req, res) => {
+    //attach user details and csrf token in request object
+    console.log(req.user, req.csrfToken);
+    res.sendStatus(200);
+  }
+);
+
+app.post("/change-email", changeAuthenticationValueMiddleware(), (req, res) => {
+  //attach user details and csrf token in request object
+  console.log(req.user, req.csrfToken);
   res.sendStatus(200);
 });
 
-app.post('/change-pwd', changePasswordMiddleware(), (req, res) => {
-   //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);console.log(req.user);
+app.post("/change-pwd", changePasswordMiddleware(), (req, res) => {
+  //attach user details and csrf token in request object
+  console.log(req.user, req.csrfToken);
+  console.log(req.user);
   res.sendStatus(200);
 });
 
-app.post('/reset-pwd', resetPasswordMiddleware(), (req, res) => {
-   //attach user details ,validation token and token expire time in request object
-    console.log(req.validationToken, req.user,req.tokenExpiresIn );
+app.post("/reset-pwd", resetPasswordMiddleware(), (req, res) => {
+  //attach user details ,validation token and token expire time in request object
+  console.log(req.validationToken, req.user, req.tokenExpiresIn);
   res.sendStatus(200);
 });
 
-app.post('/reset-pwd-verify', resetPasswordVerifyMiddleware(), (req, res) => {
-   //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+app.post("/reset-pwd-verify", resetPasswordVerifyMiddleware(), (req, res) => {
+  //attach user details and csrf token in request object
+  console.log(req.user, req.csrfToken);
   res.sendStatus(200);
 });
 
 app.post(
-  '/auth-verify-gen',
+  "/auth-verify-gen",
   generateTokenForAuthVerificationMiddleware(),
   (req, res) => {
     //attach user details ,validation token and token expire time in request object
-    console.log(req.validationToken, req.user,req.tokenExpiresIn );
+    console.log(req.validationToken, req.user, req.tokenExpiresIn);
     res.sendStatus(200);
   }
 );
 
 app.post(
-  '/auth-verify',
+  "/auth-verify",
   validateTokenForAuthVerificationMiddleware(),
   (req, res) => {
-     //attach user details and csrf token in request object
-    console.log(req.user,req.csrfToken);
+    //attach user details and csrf token in request object
+    console.log(req.user, req.csrfToken);
     res.sendStatus(200);
   }
 );
 
-app.get(
-  '/user-details-by-id',
-  async (req, res) => {
-    const {id}=req.query;
-    const user=await getUserDetails({query:{id}})
-    console.log(user);
-    res.sendStatus(200);
-  }
-);
 
-app.psot(
-  '/update-user-metadata',
-  async (req, res) => {
-    const {id}=req.query;
-    const {country}=req.body;
-    const user=await updateUserDetails({id},{country})
-    console.log(user);
-    res.sendStatus(200);
-  }
-);
+app.get("/user-details", async (req, res) => {
+  const query = req.query;
+  const user = await getUserDetails({ query });
+  res.status(200).send(user);
+});
 
+app.get("/users-details", async (req, res) => {
+  const query = req.query;
+  const users = await getUsersDetails(query);
+  removeKeysFromUserDetails(users);
+  res.status(200).send(users);
+});
+
+app.post("/update-user-metadata", async (req, res) => {
+  const { auth } = req.query;
+  const { country } = req.body;
+  const user = await updateUserDetails({ auth }, { metadata: { ...req.body } });
+  console.log(user);
+  res.sendStatus(200);
+});
+
+app.listen(3500, () => {
+  console.log("listening on port 3500");
+});
 
 ```
 
