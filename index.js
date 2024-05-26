@@ -70,6 +70,8 @@ const VERIFY_AUTH_TOKEN_VERIFICATION_FAIL =
 const CHANGE_PWD_FAIL_MESSAGE = "Password change failed. Try again later.";
 const CHANGE_AUTH_FAIL_MESSAGE =
   "Authentication details change failed. Try again later.";
+const SANITIZE_FAIL_MESSAGE =
+  "User details sanitization failed. Try again later.";
 
 const tokenValidationType = {
   ipCheck: "ipCheck",
@@ -676,6 +678,24 @@ const getUserDetailsFrmMongo = (
     : { ...requiredDetails };
   return finalDetails;
 };
+const removeUnnecessayUserDetails = (
+  mongoUserDetails,
+  includePrivateData = true
+) => {
+  const {
+    _id,
+    __v,
+    privateData,
+    csrfToken,
+    refreshToken,
+    password,
+    ...requiredDetails
+  } = mongoUserDetails;
+  const finalDetails = includePrivateData
+    ? { ...requiredDetails, privateData }
+    : { ...requiredDetails };
+  return finalDetails;
+};
 
 const getReqUserCsrfToken = (req) =>
   req.headers["X-CSRF-Token"] || req.headers["x-csrf-token"];
@@ -732,7 +752,7 @@ class PlugableAuthentication {
   #csrfTokenExpireTime = null;
   #tokenSenderFrIpValidationCb = null;
   #verifyAuthKeyOnCreation = false;
-  #santizeObjectBeforeAdd = true;
+  #sanitizeObjectBeforeAdd = true;
 
   /**
    * @param {object} options
@@ -765,8 +785,8 @@ class PlugableAuthentication {
    * @param {string} [options.csrfTokenExpireTime] - default null Ex:"10h"/"7d"
    * @param {boolean} [options.verifyAuthKeyOnCreation] - default false.
    * If you want to mark your authentication key as verified on creation. set as true.
-   * @param {boolean} [options.santizeObjectBeforeAdd] - default true.
-   * Santize metadata,privateData and publicData before adding to the database.
+   * @param {boolean} [options.sanitizeObjectBeforeAdd] - default true.
+   * sanitize metadata,privateData and publicData before adding to the database.
    */
   constructor(options) {
     const { collection } = options;
@@ -804,7 +824,7 @@ class PlugableAuthentication {
       sendTokenForIpValidation,
       csrfTokenExpireTime,
       verifyAuthKeyOnCreation,
-      santizeObjectBeforeAdd,
+      sanitizeObjectBeforeAdd,
     } = options || {};
     if (!uri || typeof uri !== "string") {
       throw new Error("Mongo URI is required");
@@ -895,10 +915,10 @@ class PlugableAuthentication {
       this.#verifyAuthKeyOnCreation = verifyAuthKeyOnCreation;
     }
     if (
-      typeof santizeObjectBeforeAdd === "boolean" &&
-      santizeObjectBeforeAdd === false
+      typeof sanitizeObjectBeforeAdd === "boolean" &&
+      sanitizeObjectBeforeAdd === false
     ) {
-      this.#santizeObjectBeforeAdd = santizeObjectBeforeAdd;
+      this.#sanitizeObjectBeforeAdd = sanitizeObjectBeforeAdd;
     }
     this.#modelReadyEventEmitter = new EventEmitter();
     this.#mongoConnect(uri);
@@ -1084,7 +1104,7 @@ class PlugableAuthentication {
         const requestBody = req.body || {};
         const token = requestBody[this.#newIpAddrTokenName];
         if (!token || typeof token !== "string") {
-          const msg = "Cannot add new IP address. Missing a required value.";
+          const msg = '"token" is required.';
           this.#createAndThrowError(msg, 400);
         }
         const userPayload = await this.#errorRespWrapper(
@@ -1131,7 +1151,7 @@ class PlugableAuthentication {
           csrfToken: user.csrfToken,
           newIpAddrErrMsg: NEW_IP_ADDR_DURING_LOG_OUT,
         });
-        req.user = getUserDetailsFrmMongo(user);
+        req.user = removeUnnecessayUserDetails(user);
         req.csrfToken = user.csrfToken;
         resetUserCookies(res, this.#cookieId);
         next();
@@ -1162,7 +1182,7 @@ class PlugableAuthentication {
         });
         const userId = user.id;
         const userNewDetails = await this.#createNewCsrfToken(userId);
-        req.user = userNewDetails;
+        req.user = removeUnnecessayUserDetails(userNewDetails);
         req.csrfToken = userNewDetails.csrfToken;
         next();
       } catch (e) {
@@ -1196,7 +1216,7 @@ class PlugableAuthentication {
           restUserDetails,
           isCsrfTokenExpired
         );
-        req.user = newUserDetails;
+        req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
         next();
@@ -1236,7 +1256,7 @@ class PlugableAuthentication {
             })
             .exec(),
         ]);
-        req.user = user;
+        req.user = removeUnnecessayUserDetails(user);
         req.csrfToken = null;
         resetUserCookies(res, this.#cookieId);
         next();
@@ -1291,6 +1311,16 @@ class PlugableAuthentication {
           customValidation,
           validationLabelName
         );
+        const userForNewAuth = await this.#getUserByQuery(
+          { [this.#authKeyName]: newAuth },
+          false,
+          ""
+        );
+
+        if (userForNewAuth) {
+          const msg = `The given ${this.#authKeyName} has already been taken. Please use different one.`;
+          this.#createAndThrowError(msg, 401);
+        }
 
         const newUserDetails = await this.#updateUserByQuery(
           { id: user.id },
@@ -1304,7 +1334,7 @@ class PlugableAuthentication {
           newUserDetails,
           isCsrfTokenExpired
         );
-        req.user = restUserDetails;
+        req.user = removeUnnecessayUserDetails(restUserDetails);
         req.csrfToken = restUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
         next();
@@ -1368,7 +1398,7 @@ class PlugableAuthentication {
           newUserDetails,
           isCsrfTokenExpired
         );
-        req.user = restUserDetails;
+        req.user = removeUnnecessayUserDetails(restUserDetails);
         req.csrfToken = restUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
         next();
@@ -1424,7 +1454,7 @@ class PlugableAuthentication {
             jwtOptions
           );
         req.validationToken = shortToken;
-        req.user = preSavedUser;
+        req.user = removeUnnecessayUserDetails(preSavedUser);
         req.tokenExpiresIn = tokenExpiresIn;
         resetUserCookies(res, this.#cookieId);
         next();
@@ -1494,7 +1524,7 @@ class PlugableAuthentication {
           token,
           RESET_PWD_TOKEN_VERIFICATION_FAIL
         );
-        req.user = newUserDetails;
+        req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         next();
       } catch (e) {
@@ -1562,7 +1592,7 @@ class PlugableAuthentication {
           isCsrfTokenExpired
         );
         req.validationToken = shortToken;
-        req.user = userNewDetails;
+        req.user = removeUnnecessayUserDetails(userNewDetails);
         req.tokenExpiresIn = tokenExpiresIn;
         next();
       } catch (e) {
@@ -1638,7 +1668,7 @@ class PlugableAuthentication {
           token,
           VERIFY_AUTH_TOKEN_VERIFICATION_FAIL
         );
-        req.user = newUserDetails;
+        req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         next();
       } catch (e) {
@@ -1648,6 +1678,26 @@ class PlugableAuthentication {
           errorHandler,
           VERIFY_AUTH_TOKEN_VERIFICATION_FAIL
         );
+      }
+    };
+  };
+
+  /**
+   *
+   * @param {object} params
+   * @param {(err:Error,resp:object)=>void} [params.errorHandler]
+   *
+   */
+  #sanitizeUserDetailsMiddleware = (params) => {
+    return (req, res, next) => {
+      const { errorHandler } = params || {};
+      try {
+        const user = req.user;
+        this.#removeKeysFromUserDetails(user);
+        req.user = user;
+        next();
+      } catch (e) {
+        return this.#errorHandler(e, res, errorHandler, SANITIZE_FAIL_MESSAGE);
       }
     };
   };
@@ -1814,7 +1864,14 @@ class PlugableAuthentication {
     return this.#getUserByQuery(
       correctQuery,
       throwErrOnUserNotFound,
-      userNotFoundMsg
+      userNotFoundMsg,
+      {
+        _id: 0,
+        __v: 0,
+        csrfToken: 0,
+        password: 0,
+        refreshToken: 0,
+      }
     );
   };
 
@@ -1843,8 +1900,8 @@ class PlugableAuthentication {
    * @param {{metadata?:object,publicData?:object,privateData?:data}} updateData
    */
   #updateUserByQueryHelper = async (updateQuery, updateData) => {
-    updateQuery = this.#formatQuery({ query: updateQuery });
-    const isValidParams = isValidObject(updateData);
+    const isValidParams =
+      isValidObject(updateData) && isValidObject(updateQuery);
     if (!isValidParams) return null;
     const user = await this.#getUserByQueryHelper({
       query: updateQuery,
@@ -1854,13 +1911,13 @@ class PlugableAuthentication {
     const { metadata, publicData, privateData } = updateData;
     const extraUpdateData = {
       metadata: isValidObject(metadata)
-        ? { ...user.metadata, ...this.#santizeObject(metadata) }
+        ? { ...user.metadata, ...this.#sanitizeObject(metadata) }
         : user.metadata,
       publicData: isValidObject(publicData)
-        ? { ...user.publicData, ...this.#santizeObject(publicData) }
+        ? { ...user.publicData, ...this.#sanitizeObject(publicData) }
         : user.publicData,
       privateData: isValidObject(privateData)
-        ? { ...user, ...this.#santizeObject(privateData) }
+        ? { ...user, ...this.#sanitizeObject(privateData) }
         : user.privateData,
     };
 
@@ -1871,9 +1928,13 @@ class PlugableAuthentication {
   #getUserByQuery = async (
     query,
     throwErrOnUserNotFound = true,
-    userNotFoundMsg = ""
+    userNotFoundMsg = "",
+    removeKeys = null
   ) => {
-    const user = await this.#model.findOne(query, null, { lean: true }).exec();
+    const correctRemoveKeys = isValidObject(removeKeys) ? removeKeys : null;
+    const user = await this.#model
+      .findOne(query, correctRemoveKeys, { lean: true })
+      .exec();
     if (!user && throwErrOnUserNotFound) {
       const msg =
         userNotFoundMsg ||
@@ -1887,7 +1948,15 @@ class PlugableAuthentication {
     const currentPage = (page - 1) * perPage;
     const pipline = [
       { $match: query },
-      { $project: { _id: 0, __v: 0 } },
+      {
+        $project: {
+          _id: 0,
+          __v: 0,
+          csrfToken: 0,
+          password: 0,
+          refreshToken: 0,
+        },
+      },
       { $skip: currentPage },
       { $limit: perPage },
     ];
@@ -1913,12 +1982,12 @@ class PlugableAuthentication {
     }
     const extraDataMaybe = {
       publicData: isValidObject(publicData)
-        ? this.#santizeObject(publicData)
+        ? this.#sanitizeObject(publicData)
         : {},
       privateData: isValidObject(privateData)
-        ? this.#santizeObject(privateData)
+        ? this.#sanitizeObject(privateData)
         : {},
-      metadata: isValidObject(metadata) ? this.#santizeObject(metadata) : {},
+      metadata: isValidObject(metadata) ? this.#sanitizeObject(metadata) : {},
     };
 
     const userId = uuidv4();
@@ -1955,7 +2024,7 @@ class PlugableAuthentication {
       .findOneAndUpdate({ userId, ...userSource }, {}, { upsert: true })
       .exec();
     const userDetails = getUserDetailsFrmMongo(newUser, true);
-    req.user = { ...userDetails };
+    req.user = removeUnnecessayUserDetails(userDetails);
     req.csrfToken = csrfToken;
   };
 
@@ -1973,11 +2042,23 @@ class PlugableAuthentication {
   /**
    *@description It removes the specified key from the user details. Try to use less nested key in keys array
    * @param {object} user
-   * @param {string[]} keys
+   * @param {object} options
+   * @param {string[]} options.keys -
+   * By Default remove privateData,csrfToken,password,updatedAt,refreshToken.
+   * Keys provided in array will append with default one.
+   * @param {boolean} options.createNewCopy - Default false. Create new copy of object and update that copy.
    * @returns
    */
-  #removeKeysFromUserDetails = (user, keys) => {
-    const userCopy = JSON.parse(JSON.stringify(user));
+  #removeKeysFromUserDetails = (user, options) => {
+    const isCorrestUser = user !== null && user && typeof user === "object";
+    if (!isCorrestUser) return;
+    const { keys, createNewCopy = false } = options || {};
+    const userCopy = createNewCopy ? JSON.parse(JSON.stringify(user)) : user;
+    const finalKeys = ["privateData", "updatedAt"];
+    if (keys !== null && typeof keys === "object" && Array.isArray(keys)) {
+      finalKeys.push(...keys);
+    }
+
     const isNestedKey = (key) => key.includes(".");
     function removeNestedKeys(obj, key) {
       const keys = key.split(".");
@@ -1985,19 +2066,34 @@ class PlugableAuthentication {
         i;
       const keysLen = keys.length;
       for (i = 0; i < keysLen - 1; i++) {
+        const keyValue = current[keys[i]];
+        const hasCorrectValue = keyValue && typeof keyValue === "object";
+        if (!hasCorrectValue) return;
         current = current[keys[i]];
       }
-      delete current[keys[keysLen - 1]];
+      const keyToDelete = keys[keysLen - 1];
+      if (current.hasOwnProperty(keyToDelete)) delete current[keyToDelete];
     }
-    let key;
-    for (key of keys) {
-      if (isNestedKey(key)) {
-        removeNestedKeys(userCopy, key);
+    function removeKey(user, keys) {
+      const isCorrectUserType = user && typeof user === "object";
+      if (!isCorrectUserType) return;
+      if (Array.isArray(user)) {
+        user.forEach((usr) => removeKey(usr, keys));
       } else {
-        delete userCopy[key];
+        let key;
+        for (key of finalKeys) {
+          if (isNestedKey(key)) {
+            removeNestedKeys(user, key);
+          } else {
+            if (user.hasOwnProperty(key)) delete user[key];
+          }
+        }
       }
     }
-    return userCopy;
+    removeKey(userCopy, finalKeys);
+    if (createNewCopy) {
+      return userCopy;
+    }
   };
 
   //================ verification helpers =================//
@@ -2030,7 +2126,7 @@ class PlugableAuthentication {
     );
     const userNewDetails = await this.#createNewCsrfToken(authUser.id);
     if (this.#disableIpMismatchValidation) {
-      req.user = { ...userNewDetails };
+      req.user = removeUnnecessayUserDetails(userNewDetails);
       req.csrfToken = userNewDetails.csrfToken;
       return tokenDetails;
     }
@@ -2049,7 +2145,7 @@ class PlugableAuthentication {
       }
       return null;
     }
-    req.user = getUserDetailsFrmMongo(userNewDetails);
+    req.user = removeUnnecessayUserDetails(userNewDetails);
     req.csrfToken = userNewDetails.csrfToken;
     return tokenDetails;
   };
@@ -2107,6 +2203,7 @@ class PlugableAuthentication {
     ]);
     const hasAccessTokenExpire = accessTokenValue.isExpired;
     const hasRefershTokenExpire = refreshTokenValue.isExpired;
+
     if (hasRefershTokenExpire) {
       const err = new Error();
       err.name = "TokenExpiredError";
@@ -2468,8 +2565,8 @@ class PlugableAuthentication {
     throw error;
   }
 
-  //================ object santizer ==================//
-  #santizeValue = (value) => {
+  //================ object sanitizer ==================//
+  #sanitizeValue = (value) => {
     if (typeof value === "string") {
       value = validator.trim(value);
       value = validator.escape(value);
@@ -2478,32 +2575,32 @@ class PlugableAuthentication {
       }
     } else if (typeof value === "object" && value !== null) {
       if (Array.isArray(value)) {
-        value = value.map(this.#santizeObject.bind(this));
+        value = value.map(this.#sanitizeObject.bind(this));
       } else {
-        value = this.#santizeObject(value);
+        value = this.#sanitizeObject(value);
       }
     }
     return value;
   };
 
-  #santizeObject(obj) {
-    if (!this.#santizeObjectBeforeAdd) return obj;
+  #sanitizeObject(obj) {
+    if (!this.#sanitizeObjectBeforeAdd) return obj;
     const isObjectType = typeof obj === "object" && obj !== null;
-    if (!isObjectType) return this.#santizeValue(obj);
+    if (!isObjectType) return this.#sanitizeValue(obj);
     if (Array.isArray(obj)) {
-      return obj.map(this.#santizeValue.bind(this));
+      return obj.map(this.#sanitizeValue.bind(this));
     }
     if (obj.constructor === Object) {
-      const santizeObj = {};
+      const sanitizeObj = {};
       for (const key in obj) {
         if (obj.hasOwnProperty(key)) {
-          santizeObj[key] = this.#santizeValue(obj[key]);
+          sanitizeObj[key] = this.#sanitizeValue(obj[key]);
         }
       }
-      return santizeObj;
+      return sanitizeObj;
     }
     if (typeof obj.toString === "function") {
-      return this.#santizeValue(obj.toString());
+      return this.#sanitizeValue(obj.toString());
     }
     return obj;
   }
@@ -2527,6 +2624,7 @@ class PlugableAuthentication {
         this.#generateTokenForAuthVerificationMiddleware,
       validateTokenForAuthVerificationMiddleware:
         this.#validateTokenForAuthVerificationMiddleware,
+      // sanitizeUserDetailsMiddleWare: this.#sanitizeUserDetailsMiddleware,
     };
   }
 
