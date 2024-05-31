@@ -1894,6 +1894,52 @@ class PlugableAuthentication {
   };
 
   /**
+   * @param {object} userOption
+   * @param {string} [userOption.id]
+   * @param {string} [userOption.auth]
+   * @param {string} [userOption.expiresIn] - Specifies the expiration of the token like '2h or 10d. For more information see jsonwebtoken.'
+   */
+  #generateAuthVerificationToken = async (userOption) => {
+    const { id, auth, expiresIn } = userOption || {};
+    if (!id && !auth)
+      throw new Error("Either userOption.id or auth is required.");
+    const query = {};
+    let hasValidQuery = false;
+    if (id && typeof id == "string") {
+      query.id = id;
+      hasValidQuery = true;
+    } else if (auth && typeof auth === "string") {
+      query[this.#authKeyName] = auth;
+      hasValidQuery = true;
+    }
+    if (!hasValidQuery) throw new Error("Invalid userOption.");
+    const user = await this.#getUserByQueryHelper({ query }, true);
+    if (user.isVerified) {
+      return { status: false, message: "The User has already been verified." };
+    }
+    const userAuth = user[this.#authKeyName];
+    const userPayload = {
+      [this.#authKeyName]: userAuth,
+      id: user.id,
+      tokenType: tokenValidationType.authCheck,
+    };
+    const jwtOptions = {
+      expiresIn:
+        expiresIn && typeof expiresIn === "string"
+          ? expiresIn
+          : RESET_PWD_EXPIRES_IN_TIME,
+    };
+    const { token: shortToken, expiresIn: tokenExpiresIn } =
+      await this.#generateValidationToken(
+        userAuth,
+        tokenValidationType.authCheck,
+        userPayload,
+        jwtOptions
+      );
+    return { status: true, shortToken, expiresIn: tokenExpiresIn };
+  };
+
+  /**
    * @param {{auth?:string,id?:string,metadata?:object,publicData?:object,privateData?:data}} updateQuery -
    * auth value is used like this email=auth,if authKeyName='email'.
    * @param {{metadata?:object,publicData?:object,privateData?:data}} updateData
@@ -2633,6 +2679,7 @@ class PlugableAuthentication {
       updateUserDetails: this.#updateUserByQueryHelper,
       removeKeysFromUserDetails: this.#removeKeysFromUserDetails,
       getUsersDetails: this.#getUsersByQueryHelper,
+      generateAuthVerificationToken: this.#generateAuthVerificationToken,
     };
   }
 }

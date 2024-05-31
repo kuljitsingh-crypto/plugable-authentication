@@ -109,6 +109,7 @@ const {
   resetPasswordVerifyMiddleware,
   generateTokenForAuthVerificationMiddleware,
   validateTokenForAuthVerificationMiddleware,
+  // sanitizeUserDetailsMiddleWare,
 } = authInstance.middlewares();
 
 const {
@@ -116,6 +117,7 @@ const {
   updateUserDetails,
   removeKeysFromUserDetails,
   getUsersDetails,
+  generateAuthVerificationToken,
 } = authInstance.helpers();
 
 app.use(express.json({ limit: "200mb" }));
@@ -124,10 +126,16 @@ app.use(cookieParser());
 // It is required to read user Ip address.
 app.set("trust proxy", true);
 
-app.post("/signup", signupMiddleware(), (req, res) => {
+app.post("/signup", signupMiddleware(), async (req, res) => {
   try {
     //attach user details and csrf token in request object
     console.log(req.user, req.csrfToken);
+    const user = req.user;
+    const tokenResp = await generateAuthVerificationToken({
+      id: user.id,
+      expiresIn: "48h",
+    });
+    console.log(tokenResp);
     res.sendStatus(200);
   } catch (e) {
     console.error(e);
@@ -207,15 +215,16 @@ app.post("/reset-pwd-verify", resetPasswordVerifyMiddleware(), (req, res) => {
   res.sendStatus(200);
 });
 
-app.post(
-  "/auth-verify-gen",
-  generateTokenForAuthVerificationMiddleware(),
-  (req, res) => {
-    //attach user details ,validation token and token expire time in request object
-    console.log(req.validationToken, req.user, req.tokenExpiresIn);
-    res.sendStatus(200);
-  }
-);
+// You can generate a token using the following middleware
+// app.post(
+//   "/auth-verify-gen",
+//   generateTokenForAuthVerificationMiddleware(),
+//   (req, res) => {
+//     //attach user details ,validation token and token expire time in request object
+//     console.log(req.validationToken, req.user, req.tokenExpiresIn);
+//     res.sendStatus(200);
+//   }
+// );
 
 app.post(
   "/auth-verify",
@@ -249,9 +258,10 @@ app.post("/update-user-metadata", async (req, res) => {
   res.sendStatus(200);
 });
 
-app.listen(3500, () => {
-  console.log("listening on port 3500");
+app.listen(4000, () => {
+  console.log("listening on port 4000");
 });
+
 
 ```
 
