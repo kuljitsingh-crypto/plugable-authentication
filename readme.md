@@ -109,7 +109,6 @@ const {
   resetPasswordVerifyMiddleware,
   generateTokenForAuthVerificationMiddleware,
   validateTokenForAuthVerificationMiddleware,
-  // sanitizeUserDetailsMiddleWare,
 } = authInstance.middlewares();
 
 const {
@@ -129,7 +128,7 @@ app.set("trust proxy", true);
 app.post("/signup", signupMiddleware(), async (req, res) => {
   try {
     //attach user details and csrf token in request object
-    console.log(req.user, req.csrfToken);
+    console.log(req.user);
     const user = req.user;
     const tokenResp = await generateAuthVerificationToken({
       id: user.id,
@@ -164,7 +163,7 @@ app.post("/new-csrf-token", newCsrfTokenMiddleware(), (req, res) => {
 
 app.get("/logout", logoutMiddleware(), (req, res) => {
   //attach user details and csrf token in request object
-  console.log(req.user, req.csrfToken);
+  console.log(req.user);
   res.sendStatus(200);
 });
 
@@ -215,16 +214,16 @@ app.post("/reset-pwd-verify", resetPasswordVerifyMiddleware(), (req, res) => {
   res.sendStatus(200);
 });
 
-// You can generate a token using the following middleware
-// app.post(
-//   "/auth-verify-gen",
-//   generateTokenForAuthVerificationMiddleware(),
-//   (req, res) => {
-//     //attach user details ,validation token and token expire time in request object
-//     console.log(req.validationToken, req.user, req.tokenExpiresIn);
-//     res.sendStatus(200);
-//   }
-// );
+// You can also create auth verification token using the following middleware
+app.post(
+  "/auth-verify-gen",
+  generateTokenForAuthVerificationMiddleware(),
+  (req, res) => {
+    //attach user details ,validation token and token expire time in request object
+    console.log(req.validationToken, req.user, req.tokenExpiresIn);
+    res.sendStatus(200);
+  }
+);
 
 app.post(
   "/auth-verify",
@@ -235,7 +234,6 @@ app.post(
     res.sendStatus(200);
   }
 );
-
 
 app.get("/user-details", async (req, res) => {
   const query = req.query;

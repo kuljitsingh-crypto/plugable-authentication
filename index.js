@@ -1066,19 +1066,20 @@ class PlugableAuthentication {
 
   /**
    * @param {object} options
+   * @param {((reqBody:object)=>boolean)|boolean} [options.isCurrentUserVerified]
    * @param {(err:Error,resp:object)=>void} [options.errorHandler]
    *
    */
   #signupMiddlware = (options) => {
     return async (req, res, next) => {
       await this.#waitUntilModelReady();
-      const { errorHandler } = options || {};
+      const { errorHandler, isCurrentUserVerified } = options || {};
       try {
         const errorMessage = this.#validateRequestData(req.body);
         if (errorMessage) {
           this.#createAndThrowError(errorMessage, 400);
         }
-        await this.#createUser(req);
+        await this.#createUser(req, isCurrentUserVerified);
         next();
       } catch (e) {
         return this.#errorHandler(
@@ -1151,7 +1152,6 @@ class PlugableAuthentication {
           newIpAddrErrMsg: NEW_IP_ADDR_DURING_LOG_OUT,
         });
         req.user = removeUnnecessayUserDetails(user);
-        req.csrfToken = user.csrfToken;
         resetUserCookies(res, this.#cookieId);
         next();
       } catch (e) {
@@ -2009,7 +2009,7 @@ class PlugableAuthentication {
     return users;
   };
 
-  #createUser = async (req) => {
+  #createUser = async (req, isCurrentUserVerified) => {
     const requestBody = req.body || {};
     const authKeyValue = requestBody[this.#authKeyName];
     const preSavedUser = await this.#model
@@ -2038,7 +2038,13 @@ class PlugableAuthentication {
     const userId = uuidv4();
     const userPayload = { id: userId, ...EXTRA_USER_PAYLOAD_FOR_TOKEN };
     const userSource = getReqUserSource(req);
-
+    const isVerified =
+      this.#verifyAuthKeyOnCreation ||
+      (typeof isCurrentUserVerified === "boolean"
+        ? isCurrentUserVerified
+        : typeof isCurrentUserVerified === "function"
+          ? !!isCurrentUserVerified(requestBody)
+          : false);
     const [refreshToken, csrfToken] = await Promise.all([
       createRefreshToken(
         userPayload,
@@ -2054,7 +2060,7 @@ class PlugableAuthentication {
       [this.#authKeyName]: authKeyValue,
       csrfToken,
       refreshToken: refreshToken,
-      isVerified: this.#verifyAuthKeyOnCreation,
+      isVerified: isVerified,
       ...extraDataMaybe,
       ...hashPassword,
     };
@@ -2070,7 +2076,6 @@ class PlugableAuthentication {
       .exec();
     const userDetails = getUserDetailsFrmMongo(newUser, true);
     req.user = removeUnnecessayUserDetails(userDetails);
-    req.csrfToken = csrfToken;
   };
 
   #updateUserByQuery = async (updateQuery, updateData, extraOptions = {}) => {
@@ -2669,7 +2674,6 @@ class PlugableAuthentication {
         this.#generateTokenForAuthVerificationMiddleware,
       validateTokenForAuthVerificationMiddleware:
         this.#validateTokenForAuthVerificationMiddleware,
-      // sanitizeUserDetailsMiddleWare: this.#sanitizeUserDetailsMiddleware,
     };
   }
 
