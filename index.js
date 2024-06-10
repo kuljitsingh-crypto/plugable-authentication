@@ -70,8 +70,6 @@ const VERIFY_AUTH_TOKEN_VERIFICATION_FAIL =
 const CHANGE_PWD_FAIL_MESSAGE = "Password change failed. Try again later.";
 const CHANGE_AUTH_FAIL_MESSAGE =
   "Authentication details change failed. Try again later.";
-const SANITIZE_FAIL_MESSAGE =
-  "User details sanitization failed. Try again later.";
 
 const tokenValidationType = {
   ipCheck: "ipCheck",
@@ -105,9 +103,7 @@ const createSchemaForCollection = (
       metadata: { type: Object, default: {} },
       publicData: { type: Object, default: {} },
       privateData: { type: Object, default: {} },
-      ...(disablePasswordValidation
-        ? {}
-        : { password: { type: String, required: true } }),
+      ...(disablePasswordValidation ? {} : { password: { type: String } }),
     },
     { timestamps: true }
   );
@@ -348,6 +344,41 @@ const createSchemaForVerifyAuthVerDataObject = (
   return schema;
 };
 
+const createSchemaForThirdPartyLoginWithoutPwd = () => {
+  const schema = Joi.object({
+    email: Joi.string().required().email(),
+    thirdPartyProvider: Joi.string().required(),
+    verified: Joi.boolean().required(),
+    metadata: Joi.object(),
+    publicData: Joi.object(),
+    privateData: Joi.object(),
+  });
+  return schema;
+};
+
+const createSchemaForThirdPartyLoginWithPwd = (
+  passwordValidationPattern = PASSWORD_VALIDATION_PATTERN,
+  passwordValidationName = PASSEORD_VALIDATION_NAME
+) => {
+  const corrctPwdValidationPattern =
+    typeof passwordValidationPattern === "string" && passwordValidationPattern
+      ? passwordValidationPattern
+      : PASSWORD_VALIDATION_PATTERN;
+  const schema = Joi.object({
+    email: Joi.string().required().email(),
+    thirdPartyProvider: Joi.string().required(),
+    password: Joi.string()
+      .required()
+      .pattern(new RegExp(corrctPwdValidationPattern), {
+        name: passwordValidationName,
+      }),
+    verified: Joi.boolean().required(),
+    metadata: Joi.object(),
+    publicData: Joi.object(),
+    privateData: Joi.object(),
+  });
+  return schema;
+};
 //================ Encrypt/Decrypr and Hashing ========================//
 
 const encodeToBase64 = (normalText) =>
@@ -680,6 +711,7 @@ const getUserDetailsFrmMongo = (
 };
 const removeUnnecessayUserDetails = (
   mongoUserDetails,
+  includeAdminOnlyData = false,
   includePrivateData = true
 ) => {
   const {
@@ -689,11 +721,18 @@ const removeUnnecessayUserDetails = (
     csrfToken,
     refreshToken,
     password,
+    metadata,
     ...requiredDetails
   } = mongoUserDetails;
+  if (includeAdminOnlyData) {
+    return { ...requiredDetails, metadata, privateData };
+  }
+  const { adminOnly: metaAdmin, ...restMetadata } = metadata;
+  const { adminOnly: privateAdmin, ...restPrivatedata } = privateData;
   const finalDetails = includePrivateData
-    ? { ...requiredDetails, privateData }
+    ? { ...requiredDetails, privateData: restPrivatedata }
     : { ...requiredDetails };
+  finalDetails.metadata = restMetadata;
   return finalDetails;
 };
 
@@ -713,8 +752,9 @@ const getReqUserCsrfToken = (req) =>
 //10) new csrf token - done - testing done
 //11) generate token for auth verification - done - testing done
 //12) Reset Password token validator - done - testing done
-//11) get current user details - done - testing done
-//12) delete curren user - done - testing done
+//13) get current user details - done - testing done
+//14) delete curren user - done - testing done
+//15) Third party Login - done - testing done
 
 class PlugableAuthentication {
   static #instanceObj = {};
@@ -753,6 +793,7 @@ class PlugableAuthentication {
   #tokenSenderFrIpValidationCb = null;
   #verifyAuthKeyOnCreation = false;
   #sanitizeObjectBeforeAdd = true;
+  #thirdPartyLoginOption = {};
 
   /**
    * @param {object} options
@@ -786,6 +827,15 @@ class PlugableAuthentication {
    * If you want to mark your authentication key as verified on creation. set as true.
    * @param {boolean} [options.sanitizeObjectBeforeAdd] - default true.
    * sanitize metadata,privateData and publicData before adding to the database.
+   * @param {{[providerName:string]:
+   * {isPasswordRequired?:boolean,
+   * passwordValidationPattern?:string,
+   * passwordValidationName?:string}}} [options.thirdPartyLoginOption] - default empty object.
+   * `providerName` representing the name of third-party authentication providers (e.g., "google", "facebook",etc.),
+   * `isPasswordRequired` (default false): Indicates whether a password is required for the corresponding authentication provider,
+   * `passwordValidationPattern` (default '^[a-zA-Z0-9@$!%*?&^#~_+-]{8,256}$'): Regex for validating passwords for the corresponding authentication provider,used only when `isPasswordRequired=true`,
+   * `passwordValidationName` (default '"Must be valid characters"'): Message displayed when a password not match `passwordValidationPattern`, used only when `isPasswordRequired=true`.
+   *
    */
   constructor(options) {
     const { collection } = options;
@@ -824,6 +874,7 @@ class PlugableAuthentication {
       csrfTokenExpireTime,
       verifyAuthKeyOnCreation,
       sanitizeObjectBeforeAdd,
+      thirdPartyLoginOption,
     } = options || {};
     if (!uri || typeof uri !== "string") {
       throw new Error("Mongo URI is required");
@@ -919,6 +970,7 @@ class PlugableAuthentication {
     ) {
       this.#sanitizeObjectBeforeAdd = sanitizeObjectBeforeAdd;
     }
+    this.#processThirdPartyLogin(thirdPartyLoginOption);
     this.#modelReadyEventEmitter = new EventEmitter();
     this.#mongoConnect(uri);
   }
@@ -1007,6 +1059,32 @@ class PlugableAuthentication {
     }
   }
 
+  #processThirdPartyLogin(thirdPartyLoginOption) {
+    if (
+      thirdPartyLoginOption !== null &&
+      typeof thirdPartyLoginOption === "object" &&
+      thirdPartyLoginOption.constructor === Object
+    ) {
+      const entries = Object.entries(thirdPartyLoginOption);
+      for (const entry of entries) {
+        const [key, value] = entry;
+        const {
+          isPasswordRequired,
+          passwordValidationPattern,
+          passwordValidationName,
+        } = value;
+        this.#thirdPartyLoginOption[key] = {
+          schema: isPasswordRequired
+            ? createSchemaForThirdPartyLoginWithPwd(
+                passwordValidationPattern || PASSWORD_VALIDATION_PATTERN,
+                passwordValidationName || PASSEORD_VALIDATION_NAME
+              )
+            : createSchemaForThirdPartyLoginWithoutPwd(),
+        };
+      }
+    }
+  }
+
   #waitUntilModelReady() {
     return new Promise((resolve) => {
       const modelCheckCb = () => {
@@ -1052,6 +1130,73 @@ class PlugableAuthentication {
           this.#createAndThrowError(msg, 401);
         }
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
+        next();
+      } catch (e) {
+        return this.#errorHandler(
+          e,
+          res,
+          errorHandler,
+          USER_LOGIN_FAIL_DEFAULT_MESSAGE
+        );
+      }
+    };
+  };
+
+  /**
+   *
+   * @param {object} params
+   * @param {(err:Error,resp:object)=>void} [params.errorHandler]
+   * @param {string} [params.redirectpath]
+   *
+   */
+  #thirdPartyLoginMiddleware = (params) => {
+    return async (req, res, next) => {
+      const { errorHandler, redirectpath } = params || {};
+      await this.#waitUntilModelReady();
+      try {
+        if (
+          typeof req.user === "object" &&
+          req.user !== null &&
+          !Array.isArray(req.user)
+        ) {
+          req.body = req.user;
+        }
+        const requestBody = req.body;
+        const { thirdPartyProvider } = requestBody;
+        const isValidThirdPartyProvider =
+          thirdPartyProvider &&
+          typeof thirdPartyProvider === "string" &&
+          this.#thirdPartyLoginOption[thirdPartyProvider] &&
+          this.#thirdPartyLoginOption[thirdPartyProvider].hasOwnProperty(
+            "schema"
+          );
+        if (!isValidThirdPartyProvider) {
+          const msg = "The third party provider does not exist.";
+          this.#createAndThrowError(msg, 400);
+        }
+        const validationSchema =
+          this.#thirdPartyLoginOption[thirdPartyProvider].schema;
+
+        const errorMessage = this.#requestDataValidationHelper(
+          validationSchema,
+          requestBody
+        );
+
+        if (errorMessage) {
+          this.#createAndThrowError(errorMessage, 400);
+        }
+        const tokenDetails = await this.#verifyThirdPartyUserLogin(req);
+
+        if (!tokenDetails) {
+          const msg =
+            "You're tring to login with different IP address.Please allow this, if you want to countinue.";
+          this.#createAndThrowError(msg, 401);
+        }
+        setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
+        if (redirectpath && typeof redirectpath === "string") {
+          res.redirect(redirectpath);
+          return;
+        }
         next();
       } catch (e) {
         return this.#errorHandler(
@@ -1151,6 +1296,7 @@ class PlugableAuthentication {
           csrfToken: user.csrfToken,
           newIpAddrErrMsg: NEW_IP_ADDR_DURING_LOG_OUT,
         });
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(user);
         resetUserCookies(res, this.#cookieId);
         next();
@@ -1181,6 +1327,7 @@ class PlugableAuthentication {
         });
         const userId = user.id;
         const userNewDetails = await this.#createNewCsrfToken(userId);
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(userNewDetails);
         req.csrfToken = userNewDetails.csrfToken;
         next();
@@ -1215,6 +1362,7 @@ class PlugableAuthentication {
           restUserDetails,
           isCsrfTokenExpired
         );
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
@@ -1255,6 +1403,7 @@ class PlugableAuthentication {
             })
             .exec(),
         ]);
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(user);
         req.csrfToken = null;
         resetUserCookies(res, this.#cookieId);
@@ -1333,6 +1482,7 @@ class PlugableAuthentication {
           newUserDetails,
           isCsrfTokenExpired
         );
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(restUserDetails);
         req.csrfToken = restUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
@@ -1397,6 +1547,7 @@ class PlugableAuthentication {
           newUserDetails,
           isCsrfTokenExpired
         );
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(restUserDetails);
         req.csrfToken = restUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
@@ -1453,6 +1604,7 @@ class PlugableAuthentication {
             jwtOptions
           );
         req.validationToken = shortToken;
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(preSavedUser);
         req.tokenExpiresIn = tokenExpiresIn;
         resetUserCookies(res, this.#cookieId);
@@ -1523,6 +1675,7 @@ class PlugableAuthentication {
           token,
           RESET_PWD_TOKEN_VERIFICATION_FAIL
         );
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         next();
@@ -1591,6 +1744,7 @@ class PlugableAuthentication {
           isCsrfTokenExpired
         );
         req.validationToken = shortToken;
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(userNewDetails);
         req.tokenExpiresIn = tokenExpiresIn;
         next();
@@ -1667,6 +1821,7 @@ class PlugableAuthentication {
           token,
           VERIFY_AUTH_TOKEN_VERIFICATION_FAIL
         );
+        req.adminUser = removeUnnecessayUserDetails(user, true);
         req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         next();
@@ -1677,26 +1832,6 @@ class PlugableAuthentication {
           errorHandler,
           VERIFY_AUTH_TOKEN_VERIFICATION_FAIL
         );
-      }
-    };
-  };
-
-  /**
-   *
-   * @param {object} params
-   * @param {(err:Error,resp:object)=>void} [params.errorHandler]
-   *
-   */
-  #sanitizeUserDetailsMiddleware = (params) => {
-    return (req, res, next) => {
-      const { errorHandler } = params || {};
-      try {
-        const user = req.user;
-        this.#removeKeysFromUserDetails(user);
-        req.user = user;
-        next();
-      } catch (e) {
-        return this.#errorHandler(e, res, errorHandler, SANITIZE_FAIL_MESSAGE);
       }
     };
   };
@@ -1724,60 +1859,59 @@ class PlugableAuthentication {
   };
 
   //=============== request data validation helper================//
-  #validateRequestData(requestBody) {
-    const validationResult = this.#dataValidationSchema.validate(
-      requestBody || {}
-    );
+  #requestDataValidationHelper(joiSchema, requestBody) {
+    const validationResult = joiSchema.validate(requestBody || {});
     const errorMessage = this.#validationErrorHandler(validationResult);
     return errorMessage;
+  }
+
+  #validateRequestData(requestBody) {
+    return this.#requestDataValidationHelper(
+      this.#dataValidationSchema,
+      requestBody
+    );
   }
 
   #validateChangeAuthRequestData(requestBody) {
-    const validationResult = this.#changeAuthValidationSchema.validate(
-      requestBody || {}
+    return this.#requestDataValidationHelper(
+      this.#changeAuthValidationSchema,
+      requestBody
     );
-    const errorMessage = this.#validationErrorHandler(validationResult);
-    return errorMessage;
   }
 
   #validateChangePwdRequestData(requestBody) {
-    const validationResult = this.#changePwdValidationSchema.validate(
-      requestBody || {}
+    return this.#requestDataValidationHelper(
+      this.#changePwdValidationSchema,
+      requestBody
     );
-    const errorMessage = this.#validationErrorHandler(validationResult);
-    return errorMessage;
   }
 
   #validateResetPwdRequestData(requestBody) {
-    const validationResult = this.#resetPwdValidationSchema.validate(
-      requestBody || {}
+    return this.#requestDataValidationHelper(
+      this.#resetPwdValidationSchema,
+      requestBody
     );
-    const errorMessage = this.#validationErrorHandler(validationResult);
-    return errorMessage;
   }
 
   #validateResetPwdVerifyRequestData(requestBody) {
-    const validationResult = this.#resetPwdVerifyValidationSchema.validate(
-      requestBody || {}
+    return this.#requestDataValidationHelper(
+      this.#resetPwdVerifyValidationSchema,
+      requestBody
     );
-    const errorMessage = this.#validationErrorHandler(validationResult);
-    return errorMessage;
   }
 
   #validateVerifyAuthGenRequestData(requestBody) {
-    const validationResult = this.#verifyAuthGenValidationSchema.validate(
-      requestBody || {}
+    return this.#requestDataValidationHelper(
+      this.#verifyAuthGenValidationSchema,
+      requestBody
     );
-    const errorMessage = this.#validationErrorHandler(validationResult);
-    return errorMessage;
   }
 
   #validateVerifyAuthVerRequestData(requestBody) {
-    const validationResult = this.#verifyAuthVerValidationSchema.validate(
-      requestBody || {}
+    return this.#requestDataValidationHelper(
+      this.#verifyAuthVerValidationSchema,
+      requestBody
     );
-    const errorMessage = this.#validationErrorHandler(validationResult);
-    return errorMessage;
   }
 
   //==============user helper==================//
@@ -1870,6 +2004,37 @@ class PlugableAuthentication {
         csrfToken: 0,
         password: 0,
         refreshToken: 0,
+        privateData: 0,
+        "metadata.adminOnly": 0,
+      }
+    );
+  };
+
+  /**
+   * @param {object} details
+   * @param {{auth?:string,id?:string,metadata?:object,privateData?:object,publicData?:object}} details.query -
+   * auth value is used like this email=auth,if authKeyName='email'.
+   * For metadata, publicData or privateData, use like this metadata:{key:string,'a.b':number}
+   * @param {boolean} [details.throwErrOnUserNotFound]
+   * @param {string} [details.userNotFoundMsg]
+   * @return {Promise<object|null>}
+   */
+  #getUserDetailsAdminData = async (details) => {
+    const correctQuery = this.#formatQuery(details);
+    if (!correctQuery) return null;
+    const { throwErrOnUserNotFound = false, userNotFoundMsg = "" } =
+      details || {};
+    await this.#waitUntilModelReady();
+    return this.#getUserByQuery(
+      correctQuery,
+      throwErrOnUserNotFound,
+      userNotFoundMsg,
+      {
+        _id: 0,
+        __v: 0,
+        csrfToken: 0,
+        password: 0,
+        refreshToken: 0,
       }
     );
   };
@@ -1891,6 +2056,25 @@ class PlugableAuthentication {
     if (!correctQuery) return [];
     await this.#waitUntilModelReady();
     return this.#getUsersByQuery(correctQuery, page, perPage);
+  };
+
+  /**
+   * @param {{auth?:string,id?:string,metadata?:object,privateData?:object,publicData?:object}} query -
+   * auth value is used like this email=auth,if authKeyName='email'.
+   * For metadata, publicData or privateData, use like this metadata:{key:string,'a.b':number}
+   * @param {number} page
+   * @param {number} perPage
+   * @return {Promise<array>}
+   */
+  #getUsersByQueryHelperForAdminData = async (
+    query,
+    page = 1,
+    perPage = USERS_PAGE_LIMIT
+  ) => {
+    const correctQuery = this.#formatQuery({ query });
+    if (!correctQuery) return [];
+    await this.#waitUntilModelReady();
+    return this.#getUsersByQuery(correctQuery, page, perPage, true);
   };
 
   /**
@@ -1989,8 +2173,16 @@ class PlugableAuthentication {
     return user ? getUserDetailsFrmMongo(user) : null;
   };
 
-  #getUsersByQuery = async (query, page = 1, perPage = USERS_PAGE_LIMIT) => {
+  #getUsersByQuery = async (
+    query,
+    page = 1,
+    perPage = USERS_PAGE_LIMIT,
+    includeAdminData = false
+  ) => {
     const currentPage = (page - 1) * perPage;
+    const adminDataMaybe = includeAdminData
+      ? {}
+      : { "metadata.adminOnly": 0, privateData: 0 };
     const pipline = [
       { $match: query },
       {
@@ -2000,6 +2192,7 @@ class PlugableAuthentication {
           csrfToken: 0,
           password: 0,
           refreshToken: 0,
+          ...adminDataMaybe,
         },
       },
       { $skip: currentPage },
@@ -2020,7 +2213,39 @@ class PlugableAuthentication {
       const msg = `User with given ${this.#authKeyName} already exists. Please log in with your registered ${this.#authKeyName}.`;
       this.#createAndThrowError(msg, 400);
     }
-    const { publicData, privateData, metadata, password } = requestBody;
+    const isVerified =
+      this.#verifyAuthKeyOnCreation ||
+      (typeof isCurrentUserVerified === "boolean"
+        ? isCurrentUserVerified
+        : typeof isCurrentUserVerified === "function"
+          ? !!isCurrentUserVerified(requestBody)
+          : false);
+    requestBody.verified = isVerified;
+    const userSource = getReqUserSource(req);
+    const newUser = await this.#createNewUser(
+      authKeyValue,
+      requestBody,
+      userSource
+    );
+    const userDetails = getUserDetailsFrmMongo(newUser, true);
+    req.adminUser = removeUnnecessayUserDetails(user, true);
+    req.user = removeUnnecessayUserDetails(userDetails);
+  };
+
+  async #createNewUser(
+    authKeyValue,
+    restBody,
+    userSource,
+    isThirdPartyUser = false
+  ) {
+    const {
+      publicData,
+      privateData,
+      metadata,
+      password,
+      verified,
+      thirdPartyProvider,
+    } = restBody;
     const hashPassword = {};
     if (!!password) {
       hashPassword.password = await createHashPasswword(password);
@@ -2034,17 +2259,15 @@ class PlugableAuthentication {
         : {},
       metadata: isValidObject(metadata) ? this.#sanitizeObject(metadata) : {},
     };
-
+    if (isThirdPartyUser) {
+      extraDataMaybe.privateData.isThirdPartyLogin = isThirdPartyUser;
+    }
+    if (thirdPartyProvider) {
+      extraDataMaybe.privateData.thirdPartyProvider = thirdPartyProvider;
+    }
     const userId = uuidv4();
     const userPayload = { id: userId, ...EXTRA_USER_PAYLOAD_FOR_TOKEN };
-    const userSource = getReqUserSource(req);
-    const isVerified =
-      this.#verifyAuthKeyOnCreation ||
-      (typeof isCurrentUserVerified === "boolean"
-        ? isCurrentUserVerified
-        : typeof isCurrentUserVerified === "function"
-          ? !!isCurrentUserVerified(requestBody)
-          : false);
+    const isVerified = !!verified;
     const [refreshToken, csrfToken] = await Promise.all([
       createRefreshToken(
         userPayload,
@@ -2064,6 +2287,7 @@ class PlugableAuthentication {
       ...extraDataMaybe,
       ...hashPassword,
     };
+
     const newUser = await this.#updateUserByQuery(
       { id: userId },
       newUserDetails,
@@ -2074,9 +2298,8 @@ class PlugableAuthentication {
     await this.#userSourceModel
       .findOneAndUpdate({ userId, ...userSource }, {}, { upsert: true })
       .exec();
-    const userDetails = getUserDetailsFrmMongo(newUser, true);
-    req.user = removeUnnecessayUserDetails(userDetails);
-  };
+    return newUser;
+  }
 
   #updateUserByQuery = async (updateQuery, updateData, extraOptions = {}) => {
     const userNewDetails = await this.#model
@@ -2176,6 +2399,7 @@ class PlugableAuthentication {
     );
     const userNewDetails = await this.#createNewCsrfToken(authUser.id);
     if (this.#disableIpMismatchValidation) {
+      req.adminUser = removeUnnecessayUserDetails(user, true);
       req.user = removeUnnecessayUserDetails(userNewDetails);
       req.csrfToken = userNewDetails.csrfToken;
       return tokenDetails;
@@ -2195,6 +2419,61 @@ class PlugableAuthentication {
       }
       return null;
     }
+    req.adminUser = removeUnnecessayUserDetails(user, true);
+    req.user = removeUnnecessayUserDetails(userNewDetails);
+    req.csrfToken = userNewDetails.csrfToken;
+    return tokenDetails;
+  };
+
+  #verifyThirdPartyUserLogin = async (req) => {
+    const requestBody = req.body || {};
+    const authKeyValue = requestBody.email;
+    const { thirdPartyProvider } = requestBody;
+    const thirdPartyConfig = this.#thirdPartyLoginOption[thirdPartyProvider];
+    if (!thirdPartyConfig.isPasswordRequired) {
+      delete requestBody.password;
+    }
+    const query = { [this.#authKeyName]: authKeyValue };
+    const userSource = getReqUserSource(req);
+    let user = await this.#getUserByQuery(query, false, "");
+    if (!user) {
+      user = await this.#createNewUser(
+        authKeyValue,
+        requestBody,
+        userSource,
+        true
+      );
+    }
+    const authUser = getUserDetailsFrmMongo(user);
+    const tokenDetails = await createAccessFrmRefreshToken(
+      authUser.refreshToken,
+      this.#jwtSecret,
+      this.#encryptSecret,
+      this.#jwtOptions
+    );
+    const userNewDetails = await this.#createNewCsrfToken(authUser.id);
+    if (this.#disableIpMismatchValidation) {
+      req.adminUser = removeUnnecessayUserDetails(user, true);
+      req.user = removeUnnecessayUserDetails(userNewDetails);
+      req.csrfToken = userNewDetails.csrfToken;
+      return tokenDetails;
+    }
+    const userAllowedIpAddr = await this.#userSourceModel
+      .findOne({ userId: authUser.id, ...userSource })
+      .exec();
+
+    if (!userAllowedIpAddr) {
+      if (typeof sendTokenFrIpValidation === "function") {
+        await this.#ipValidationTokenHelper(
+          authUser,
+          userSource,
+          jwtOptnFrIpValidation,
+          sendTokenFrIpValidation
+        );
+      }
+      return null;
+    }
+    req.adminUser = removeUnnecessayUserDetails(user, true);
     req.user = removeUnnecessayUserDetails(userNewDetails);
     req.csrfToken = userNewDetails.csrfToken;
     return tokenDetails;
@@ -2394,7 +2673,9 @@ class PlugableAuthentication {
   ) {
     const authValue = requestBody[this.#authKeyName];
     const password = requestBody.password;
-    if (!authValue) {
+    const isVaidRefUserPwd =
+      refUser.password && typeof refUser.password === "string";
+    if (!authValue || !isVaidRefUserPwd) {
       this.#createAndThrowError("Invalid user authentication details.", 401);
     }
     let isUserVerified = false;
@@ -2619,7 +2900,7 @@ class PlugableAuthentication {
   #sanitizeValue = (value) => {
     if (typeof value === "string") {
       value = validator.trim(value);
-      value = validator.escape(value);
+      value = validator.isURL(value) ? value : validator.escape(value);
       if (validator.isEmail(value)) {
         value = validator.normalizeEmail(value);
       }
@@ -2633,7 +2914,20 @@ class PlugableAuthentication {
     return value;
   };
 
-  #sanitizeObject(obj) {
+  #unSanitizeValue = (value) => {
+    if (typeof value === "string") {
+      value = validator.unescape(value);
+    } else if (typeof value === "object" && value !== null) {
+      if (Array.isArray(value)) {
+        value = value.map(this.#unsanitizeObject.bind(this));
+      } else {
+        value = this.#unsanitizeObject(value);
+      }
+    }
+    return value;
+  };
+
+  #sanitizeObject = (obj) => {
     if (!this.#sanitizeObjectBeforeAdd) return obj;
     const isObjectType = typeof obj === "object" && obj !== null;
     if (!isObjectType) return this.#sanitizeValue(obj);
@@ -2653,12 +2947,40 @@ class PlugableAuthentication {
       return this.#sanitizeValue(obj.toString());
     }
     return obj;
-  }
+  };
+
+  /**
+   *
+   * @param {object} sanitizeObject
+   * @returns {object}
+   */
+  #unsanitizeObject = (sanitizeObject) => {
+    const isObjectType =
+      typeof sanitizeObject === "object" && sanitizeObject !== null;
+    if (!isObjectType) return this.#unSanitizeValue(sanitizeObject);
+    if (Array.isArray(sanitizeObject)) {
+      return obj.map(this.#unSanitizeValue.bind(this));
+    }
+    if (sanitizeObject.constructor === Object) {
+      const sanitizeObj = {};
+      for (const key in sanitizeObject) {
+        if (sanitizeObject.hasOwnProperty(key)) {
+          sanitizeObj[key] = this.#unSanitizeValue(sanitizeObject[key]);
+        }
+      }
+      return sanitizeObj;
+    }
+    if (typeof sanitizeObject.toString === "function") {
+      return this.#unSanitizeValue(obj.toString());
+    }
+    return sanitizeObject;
+  };
 
   middlewares() {
     return {
       signupMiddleware: this.#signupMiddlware,
       loginMiddleware: this.#loginMiddleware,
+      thirdPartyLoginMiddleware: this.#thirdPartyLoginMiddleware,
       logoutMiddleware: this.#logoutMiddleware,
       newIpAddrCheckMiddleware: this.#newIpAddrCheckMiddleware,
       newCsrfTokenMiddleware: this.#newCsrfTokenMiddleware,
@@ -2680,10 +3002,13 @@ class PlugableAuthentication {
   helpers() {
     return {
       getUserDetails: this.#getUserByQueryHelper,
+      getUserDetailsWithAdminData: this.#getUserDetailsAdminData,
       updateUserDetails: this.#updateUserByQueryHelper,
       removeKeysFromUserDetails: this.#removeKeysFromUserDetails,
       getUsersDetails: this.#getUsersByQueryHelper,
+      getUsersDetailsWithAdminData: this.#getUsersByQueryHelperForAdminData,
       generateAuthVerificationToken: this.#generateAuthVerificationToken,
+      unsanitizeObject: this.#unsanitizeObject,
     };
   }
 }
