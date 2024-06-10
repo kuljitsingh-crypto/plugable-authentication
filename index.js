@@ -1327,7 +1327,7 @@ class PlugableAuthentication {
         });
         const userId = user.id;
         const userNewDetails = await this.#createNewCsrfToken(userId);
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(userNewDetails, true);
         req.user = removeUnnecessayUserDetails(userNewDetails);
         req.csrfToken = userNewDetails.csrfToken;
         next();
@@ -1362,7 +1362,7 @@ class PlugableAuthentication {
           restUserDetails,
           isCsrfTokenExpired
         );
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(newUserDetails, true);
         req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
@@ -1482,7 +1482,7 @@ class PlugableAuthentication {
           newUserDetails,
           isCsrfTokenExpired
         );
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(restUserDetails, true);
         req.user = removeUnnecessayUserDetails(restUserDetails);
         req.csrfToken = restUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
@@ -1547,7 +1547,7 @@ class PlugableAuthentication {
           newUserDetails,
           isCsrfTokenExpired
         );
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(restUserDetails, true);
         req.user = removeUnnecessayUserDetails(restUserDetails);
         req.csrfToken = restUserDetails.csrfToken;
         setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, res);
@@ -1588,7 +1588,6 @@ class PlugableAuthentication {
           [this.#authKeyName]: auth,
           id: preSavedUser.id,
           tokenType: tokenValidationType.resetPwd,
-          password: preSavedUser.password,
         };
         const jwtOptions = {
           expiresIn:
@@ -1604,7 +1603,7 @@ class PlugableAuthentication {
             jwtOptions
           );
         req.validationToken = shortToken;
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(preSavedUser, true);
         req.user = removeUnnecessayUserDetails(preSavedUser);
         req.tokenExpiresIn = tokenExpiresIn;
         resetUserCookies(res, this.#cookieId);
@@ -1636,7 +1635,7 @@ class PlugableAuthentication {
           this.#createAndThrowError(errorMessage, 400);
         }
         const { auth, token, newPassword } = req.body || {};
-        const userPayload = await await this.#errorRespWrapper(
+        const userPayload = await this.#errorRespWrapper(
           res,
           this.#verifyValidationToken
         )(
@@ -1644,13 +1643,18 @@ class PlugableAuthentication {
           RESET_PWD_TOKEN_VERIFICATION_FAIL,
           RESET_PWD_TOKEN_VERIFICATION_FAIL
         );
-        const savedAuthValue = userPayload[this.#authKeyName];
-        const prePasswords = userPayload.password;
         const userId = userPayload.id;
+        const preSavedUser = await this.#getUserByQuery(
+          { [this.#authKeyName]: auth },
+          true
+        );
+        const savedAuthValue = userPayload[this.#authKeyName];
+        const prePasswords = preSavedUser.password;
         const tokenType = userPayload.tokenType;
         if (
           savedAuthValue !== auth ||
-          tokenType !== tokenValidationType.resetPwd
+          tokenType !== tokenValidationType.resetPwd ||
+          !(prePasswords && typeof prePasswords === "string")
         ) {
           const msg = `User's ${this.#authKeyName} does not match with requested one. Please double check and try again.`;
           this.#createAndThrowError(msg, 400);
@@ -1675,7 +1679,7 @@ class PlugableAuthentication {
           token,
           RESET_PWD_TOKEN_VERIFICATION_FAIL
         );
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(newUserDetails, true);
         req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         next();
@@ -1744,7 +1748,7 @@ class PlugableAuthentication {
           isCsrfTokenExpired
         );
         req.validationToken = shortToken;
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(userNewDetails, true);
         req.user = removeUnnecessayUserDetails(userNewDetails);
         req.tokenExpiresIn = tokenExpiresIn;
         next();
@@ -1821,7 +1825,7 @@ class PlugableAuthentication {
           token,
           VERIFY_AUTH_TOKEN_VERIFICATION_FAIL
         );
-        req.adminUser = removeUnnecessayUserDetails(user, true);
+        req.adminUser = removeUnnecessayUserDetails(newUserDetails, true);
         req.user = removeUnnecessayUserDetails(newUserDetails);
         req.csrfToken = newUserDetails.csrfToken;
         next();
@@ -2228,7 +2232,7 @@ class PlugableAuthentication {
       userSource
     );
     const userDetails = getUserDetailsFrmMongo(newUser, true);
-    req.adminUser = removeUnnecessayUserDetails(user, true);
+    req.adminUser = removeUnnecessayUserDetails(userDetails, true);
     req.user = removeUnnecessayUserDetails(userDetails);
   };
 
@@ -2399,7 +2403,7 @@ class PlugableAuthentication {
     );
     const userNewDetails = await this.#createNewCsrfToken(authUser.id);
     if (this.#disableIpMismatchValidation) {
-      req.adminUser = removeUnnecessayUserDetails(user, true);
+      req.adminUser = removeUnnecessayUserDetails(userNewDetails, true);
       req.user = removeUnnecessayUserDetails(userNewDetails);
       req.csrfToken = userNewDetails.csrfToken;
       return tokenDetails;
@@ -2419,7 +2423,7 @@ class PlugableAuthentication {
       }
       return null;
     }
-    req.adminUser = removeUnnecessayUserDetails(user, true);
+    req.adminUser = removeUnnecessayUserDetails(userNewDetails, true);
     req.user = removeUnnecessayUserDetails(userNewDetails);
     req.csrfToken = userNewDetails.csrfToken;
     return tokenDetails;
@@ -2453,7 +2457,7 @@ class PlugableAuthentication {
     );
     const userNewDetails = await this.#createNewCsrfToken(authUser.id);
     if (this.#disableIpMismatchValidation) {
-      req.adminUser = removeUnnecessayUserDetails(user, true);
+      req.adminUser = removeUnnecessayUserDetails(userNewDetails, true);
       req.user = removeUnnecessayUserDetails(userNewDetails);
       req.csrfToken = userNewDetails.csrfToken;
       return tokenDetails;
@@ -2473,7 +2477,7 @@ class PlugableAuthentication {
       }
       return null;
     }
-    req.adminUser = removeUnnecessayUserDetails(user, true);
+    req.adminUser = removeUnnecessayUserDetails(userNewDetails, true);
     req.user = removeUnnecessayUserDetails(userNewDetails);
     req.csrfToken = userNewDetails.csrfToken;
     return tokenDetails;
