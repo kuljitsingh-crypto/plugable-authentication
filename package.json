@@ -1,6 +1,6 @@
 {
   "name": "plugable-authentication",
-  "version": "2.0.7",
+  "version": "2.5.0",
   "description": "The PlugableAuthentication module offers middleware functions for various authentication tasks within Node.js applications, particularly in conjunction with Express.js.",
   "main": "index.js",
   "scripts": {
