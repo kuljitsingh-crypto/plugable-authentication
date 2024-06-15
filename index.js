@@ -2482,6 +2482,48 @@ class PlugableAuthentication {
     req.csrfToken = userNewDetails.csrfToken;
     return tokenDetails;
   };
+  /**
+   *
+   * @param {Request} request -Request Body must be equals to {email:string,thirdPartyProvider:string,verified:boolean,
+   * password?:string,metadata?:object,publicData?:object,privateData?:object}. If third party provider
+   * required password and "isPasswordRequired=true" then only password is requried.
+   * @param {Response} response
+   */
+  #thirdPartyLogin = async (request, response) => {
+    await this.#waitUntilModelReady();
+    const requestBody = request.body;
+    const { thirdPartyProvider } = requestBody;
+    const isValidThirdPartyProvider =
+      thirdPartyProvider &&
+      typeof thirdPartyProvider === "string" &&
+      this.#thirdPartyLoginOption[thirdPartyProvider] &&
+      this.#thirdPartyLoginOption[thirdPartyProvider].hasOwnProperty("schema");
+    if (!isValidThirdPartyProvider) {
+      const msg = "The third party provider does not exist.";
+      this.#createAndThrowError(msg, 400);
+    }
+    const validationSchema =
+      this.#thirdPartyLoginOption[thirdPartyProvider].schema;
+    const errorMessage = this.#requestDataValidationHelper(
+      validationSchema,
+      requestBody
+    );
+    if (errorMessage) {
+      this.#createAndThrowError(errorMessage, 400);
+    }
+    const tokenDetails = await this.#verifyThirdPartyUserLogin(request);
+    if (!tokenDetails) {
+      const msg =
+        "You're tring to login with different IP address.Please allow this, if you want to countinue.";
+      this.#createAndThrowError(msg, 401);
+    }
+    setUserCookies(tokenDetails, COOKIE_EXPIRES_TIME, this.#cookieId, response);
+    return {
+      adminUser: request.adminUser,
+      csrfToken: request.csrfToken,
+      user: request.user,
+    };
+  };
 
   async #ipValidationTokenHelper(
     user,
@@ -3012,6 +3054,7 @@ class PlugableAuthentication {
       getUsersDetails: this.#getUsersByQueryHelper,
       getUsersDetailsWithAdminData: this.#getUsersByQueryHelperForAdminData,
       generateAuthVerificationToken: this.#generateAuthVerificationToken,
+      thirdPartyLogin: this.#thirdPartyLogin,
       unsanitizeObject: this.#unsanitizeObject,
     };
   }

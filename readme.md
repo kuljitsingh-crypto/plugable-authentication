@@ -135,6 +135,7 @@ const {
   unsanitizeObject,
   getUserDetailsWithAdminData, // user details with admin data
   getUsersDetailsWithAdminData // users details with admin data
+  thirdPartyLogin, // same as thirdPartyLoginMiddleware. Key difference is that you can call inside your request callback.
 } = authInstance.helpers();
 
 const PORT = 3500;
@@ -146,7 +147,7 @@ app.use(cookieParser());
 app.set("trust proxy", true);
 
 //-----------------Note for User object-----------------------------
-//If you want to store some data in "privateData" or "metadata," that should not be sent to the user or the current user, place that data in the adminOnly field. For example, use metadata = { adminOnly: { secret: "123" } } or privateData = { adminOnly: { secret: "123" } }. This way, the user or the current user will not have access to metadata.adminOnly.secret or privateData.adminOnly.secret, as this data will be ignored in req.user. If you need to access this data outside of middleware, use req.adminUser.
+//If you want to store some data in "privateData" or "metadata,"that should not be sent to the user or the current user, place that data in the adminOnly field. For example, use metadata = { adminOnly: { secret: "123" } } or privateData = { adminOnly: { secret: "123" } }. This way, the user or the current user will not have access to metadata.adminOnly.secret or privateData.adminOnly.secret, as this data will be ignored in req.user. If you need to access this data outside of middleware, use req.adminUser.
 //------------Middleware Requirements --------------------------------
 
 // 1) signupMiddleware - Request Body must have the following parameters 
