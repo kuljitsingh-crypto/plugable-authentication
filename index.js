@@ -2719,8 +2719,9 @@ class PlugableAuthentication {
   ) {
     const authValue = requestBody[this.#authKeyName];
     const password = requestBody.password;
-    const isVaidRefUserPwd =
-      refUser.password && typeof refUser.password === "string";
+    const isVaidRefUserPwd = this.#disablePasswordValidation
+      ? true
+      : refUser.password && typeof refUser.password === "string";
     if (!authValue || !isVaidRefUserPwd) {
       this.#createAndThrowError("Invalid user authentication details.", 401);
     }
